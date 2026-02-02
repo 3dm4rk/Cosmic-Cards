@@ -1573,6 +1573,14 @@ function updateTowersUI(){
   const capEl = document.getElementById("towersCap");
   if (capEl) capEl.textContent = String(cap);
 
+  // Tower percent (1–100%)
+  const pctEl = document.getElementById("towerPercent");
+  if (pctEl){
+    const storedRaw = Number(state.towers?.stored || 0);
+    const pct = clamp(Math.round((storedRaw / cap) * 100), 1, 100);
+    pctEl.textContent = `${pct}%`;
+  }
+
   const multEl = document.getElementById("towersMult");
   if (multEl) multEl.textContent = `${mult.toFixed(1)}x`;
 }
@@ -3658,6 +3666,16 @@ function collectTowersGold(){
   // Tower collect SFX (dedicated)
   playTowerGoldSFX();
   state.gold += gain;
+
+  // Visual collect FX + notification
+  try{
+    if (openGoldPanel){
+      openGoldPanel.classList.add("collectFx");
+      setTimeout(()=>openGoldPanel.classList.remove("collectFx"), 650);
+    }
+  }catch(_){ }
+  showGoldPop(gain, openGoldPanel);
+  toast("Tower", `Added ${fmt(gain)} gold`);
   state.towers.stored = 0;
   state.towers.lastTs = Date.now();
   saveState();

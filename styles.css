@@ -18,17 +18,104 @@
 }
 
 *{box-sizing:border-box}
+
+html{
+  background-color:#050712;
+}
+
 html,body{height:100%}
 body{
   margin:0;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   color:var(--text);
-  background:
-    radial-gradient(900px 520px at 20% 10%, rgba(184,107,255,.16), transparent),
-    radial-gradient(900px 520px at 80% 80%, rgba(82,255,240,.16), transparent),
-    linear-gradient(180deg, var(--bg0), var(--bg1));
+  min-height:100vh;
   overflow-x:hidden;
+
+  /* Premium, eye-catchy space backdrop (no extra assets required) */
+  background:
+    radial-gradient(1200px 820px at 18% 12%, rgba(184,107,255,.20), transparent 60%),
+    radial-gradient(1100px 760px at 86% 86%, rgba(82,255,240,.18), transparent 62%),
+    radial-gradient(900px 520px at 55% 48%, rgba(255,204,51,.10), transparent 66%),
+    linear-gradient(180deg, #040512 0%, var(--bg1) 55%, #040512 100%);
+  background-attachment: fixed;
+  position:relative;
+  isolation:isolate;
 }
+
+/* Starfield + nebula layers (subtle parallax drift) */
+body::before{
+  content:"";
+  position:fixed;
+  inset:-10%;
+  pointer-events:none;
+  z-index:-2;
+  opacity:.70;
+
+  background:
+    /* soft nebula haze */
+    radial-gradient(900px 520px at 30% 25%, rgba(184,107,255,.14), transparent 60%),
+    radial-gradient(820px 520px at 70% 70%, rgba(82,255,240,.12), transparent 62%),
+    radial-gradient(760px 460px at 60% 25%, rgba(255,204,51,.08), transparent 65%),
+
+    /* tiny stars */
+    radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,.55), transparent 45%),
+    radial-gradient(1px 1px at 18% 76%, rgba(255,255,255,.45), transparent 45%),
+    radial-gradient(1px 1px at 24% 40%, rgba(255,255,255,.40), transparent 45%),
+    radial-gradient(1px 1px at 32% 12%, rgba(255,255,255,.50), transparent 45%),
+    radial-gradient(1px 1px at 44% 66%, rgba(255,255,255,.35), transparent 45%),
+    radial-gradient(1px 1px at 56% 18%, rgba(255,255,255,.52), transparent 45%),
+    radial-gradient(1px 1px at 62% 52%, rgba(255,255,255,.38), transparent 45%),
+    radial-gradient(1px 1px at 74% 34%, rgba(255,255,255,.44), transparent 45%),
+    radial-gradient(1px 1px at 82% 14%, rgba(255,255,255,.52), transparent 45%),
+    radial-gradient(1px 1px at 86% 58%, rgba(255,255,255,.36), transparent 45%),
+    radial-gradient(1px 1px at 92% 80%, rgba(255,255,255,.46), transparent 45%),
+    radial-gradient(1px 1px at 6% 92%, rgba(255,255,255,.40), transparent 45%),
+
+    /* a few bigger stars */
+    radial-gradient(2px 2px at 22% 28%, rgba(255,255,255,.55), transparent 55%),
+    radial-gradient(2px 2px at 66% 44%, rgba(255,255,255,.50), transparent 55%),
+    radial-gradient(2px 2px at 88% 24%, rgba(255,255,255,.55), transparent 55%);
+
+  filter: saturate(1.08);
+  transform: translate3d(0,0,0);
+  animation: bgDrift 22s ease-in-out infinite alternate;
+  mix-blend-mode: screen;
+}
+
+/* Premium film grain (kept very subtle) */
+body::after{
+  content:"";
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  z-index:-1;
+  opacity:.10;
+
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+  background-size: 220px 220px;
+  animation: grainShift 7s steps(6) infinite;
+  mix-blend-mode: overlay;
+}
+
+@keyframes bgDrift{
+  0%{ transform: translate3d(-1.5%, -1%, 0) scale(1.02); filter: hue-rotate(0deg) saturate(1.06); }
+  100%{ transform: translate3d(1.5%, 1%, 0) scale(1.03); filter: hue-rotate(10deg) saturate(1.10); }
+}
+
+@keyframes grainShift{
+  0%{ transform: translate3d(0,0,0); }
+  25%{ transform: translate3d(-1%, .6%, 0); }
+  50%{ transform: translate3d(.8%, -1.2%, 0); }
+  75%{ transform: translate3d(-.6%, -.8%, 0); }
+  100%{ transform: translate3d(1%, .8%, 0); }
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce){
+  body::before, body::after{ animation: none !important; }
+  body{ background-attachment: scroll; }
+}
+
 
 header{
   position:sticky;
@@ -648,7 +735,9 @@ header{
   border-radius:16px;
   border:1px solid rgba(255,255,255,.12);
   background: rgba(10,12,24,.55);
-  cursor:pointer;
+    position: relative;
+  overflow: visible;
+cursor:pointer;
   user-select:none;
 }
 .goldPlaceholderCard{
@@ -664,6 +753,50 @@ header{
   font-weight:900;
   color: rgba(255,215,0,.95);
   text-shadow: 0 0 10px rgba(255,215,0,.25);
+}
+
+.towerPercent{
+  position:absolute;
+  top:10px;
+  right:10px;
+  padding:4px 8px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:1000;
+  letter-spacing:.03em;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255,255,255,.95);
+  background: rgba(0,0,0,.35);
+  border: 1px solid rgba(255,255,255,.16);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 28px rgba(0,0,0,.45);
+  pointer-events:none;
+}
+
+/* Tower redeem FX */
+.goldPlaceholderInner.collectFx .goldPlaceholderCard{
+  animation: towerCollectPulse .65s ease-out;
+  filter: drop-shadow(0 0 18px rgba(255,215,0,.75));
+}
+.goldPlaceholderInner.collectFx::after{
+  content:"";
+  position:absolute;
+  inset:-6px;
+  border-radius: 20px;
+  background: radial-gradient(circle at 50% 50%, rgba(255,215,0,.45), transparent 60%);
+  opacity:0;
+  pointer-events:none;
+  animation: towerCollectGlow .65s ease-out;
+}
+@keyframes towerCollectPulse{
+  0%{ transform: scale(1); }
+  40%{ transform: scale(1.12); }
+  100%{ transform: scale(1); }
+}
+@keyframes towerCollectGlow{
+  0%{ opacity:0; transform: scale(.92); }
+  35%{ opacity:1; transform: scale(1); }
+  100%{ opacity:0; transform: scale(1.08); }
 }
 
 /* ===== Coming Soon modal content (Pet Shop placeholder) ===== */
@@ -2220,5 +2353,149 @@ body.rotateLock{ overflow: hidden; }
     border-radius: 999px;
     border: 2px solid rgba(0,0,0,0);
     background-clip: padding-box;
+  }
+}
+
+/* ===============================
+   CLEAN GALAXY MODE (NO HARD BORDERS)
+   =============================== */
+
+/* Remove visible container borders that can look like "background frames" */
+header,
+.shop,
+.slotPanel,
+.viewport,
+.heroImgWrap,
+.goldPlaceholderInner,
+.modal,
+.modalOverlay{
+  border: none !important;
+}
+
+/* Replace hard borders with a soft edge + deep shadow */
+.shop,
+.slotPanel,
+.heroImgWrap,
+.goldPlaceholderInner,
+.modal{
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.04),
+    0 25px 80px rgba(0,0,0,0.65);
+}
+
+/* Make header blend into space */
+header{
+  background: linear-gradient(
+    180deg,
+    rgba(5,7,18,0.88),
+    rgba(5,7,18,0.55)
+  ) !important;
+  backdrop-filter: blur(16px);
+}
+
+/* Remove inner framing feel */
+.viewport{
+  background: transparent !important;
+}
+
+/* Optional: smoother section edges */
+.shop,
+.slotPanel,
+.modal,
+.heroImgWrap{
+  border-radius: 26px;
+}
+
+
+/* ===============================
+   BACKGROUND MOTION (SAFE)
+   =============================== */
+@keyframes bgDrift{
+  0%{
+    background-position:
+      0 0, 0 0, 0 0, 0 0, 0 0,
+      0 0, 0 0, 0 0,
+      0 0, 0 0, 0 0,
+      0 0, 0 0,
+      0 0,
+      0 0;
+  }
+  100%{
+    background-position:
+      0 -520px, 0 -420px, 0 -340px, 0 -260px, 0 -180px,
+      0 -80px, 0 -60px, 0 -40px,
+      0 0, 0 0, 0 0,
+      0 0, 0 0,
+      0 0,
+      0 0;
+  }
+}
+@keyframes bgTwinkle{
+  0%,100%{ filter: brightness(1); }
+  50%{ filter: brightness(1.06); }
+}
+
+
+
+/* ===========================
+   PERFORMANCE PATCH (FAST)
+   - Removes fixed/animated background layers
+   - Disables expensive backdrop-filter blurs
+   =========================== */
+
+body{
+  background-attachment: scroll !important;
+}
+
+/* Lightweight starfield (static, GPU-friendly) */
+body::before{
+  position:absolute !important;
+  inset:0 !important;
+  opacity:.55 !important;
+  pointer-events:none;
+  z-index:-2;
+
+  /* No parallax, no blend, no heavy filters */
+  animation:none !important;
+  mix-blend-mode: normal !important;
+  filter:none !important;
+  transform:none !important;
+
+  background:
+    radial-gradient(900px 520px at 28% 22%, rgba(184,107,255,.14), transparent 62%),
+    radial-gradient(820px 520px at 78% 76%, rgba(82,255,240,.12), transparent 64%),
+    radial-gradient(760px 460px at 60% 24%, rgba(255,204,51,.08), transparent 66%),
+
+    /* Simple star sprinkle using repeating gradients (cheap) */
+    radial-gradient(1px 1px at 12% 18%, rgba(255,255,255,.55), transparent 55%),
+    radial-gradient(1px 1px at 22% 78%, rgba(255,255,255,.40), transparent 55%),
+    radial-gradient(1px 1px at 36% 38%, rgba(255,255,255,.38), transparent 55%),
+    radial-gradient(1px 1px at 48% 12%, rgba(255,255,255,.52), transparent 55%),
+    radial-gradient(1px 1px at 58% 62%, rgba(255,255,255,.35), transparent 55%),
+    radial-gradient(1px 1px at 72% 34%, rgba(255,255,255,.42), transparent 55%),
+    radial-gradient(1px 1px at 86% 14%, rgba(255,255,255,.52), transparent 55%),
+    radial-gradient(1px 1px at 92% 78%, rgba(255,255,255,.36), transparent 55%),
+
+    radial-gradient(2px 2px at 18% 28%, rgba(255,255,255,.50), transparent 60%),
+    radial-gradient(2px 2px at 66% 44%, rgba(255,255,255,.48), transparent 60%),
+    radial-gradient(2px 2px at 88% 22%, rgba(255,255,255,.52), transparent 60%);
+}
+
+/* Remove film grain (it’s surprisingly expensive on some GPUs) */
+body::after{
+  display:none !important;
+}
+
+/* Backdrop blur is a top source of lag in browsers */
+*{
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* Reduce motion for everyone a bit (keeps UI snappy) */
+@media (prefers-reduced-motion: no-preference){
+  /* If some components animate heavily, this helps without killing all flair */
+  *{
+    scroll-behavior: auto;
   }
 }
