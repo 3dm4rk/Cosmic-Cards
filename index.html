@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Premium Gacha Main Shop</title>
+  <meta name="theme-color" content="#050712"/>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div class="wrap">
+    
+
+    <div class="headerActions">
+      <div class="wallet goldWallet">
+        <span class="goldIcon" aria-hidden="true"></span>
+        <span class="goldValue" id="gold">0</span>
+      </div>
+
+      
+
+      
+      <button class="invBtn" id="openGalleryBtn" type="button" aria-haspopup="dialog" aria-controls="galleryOverlay">
+        <span class="invIcon" aria-hidden="true"></span>
+        <span>Gallery</span>
+      </button>
+
+<button class="invBtn" id="openPetShopBtn" type="button" aria-haspopup="dialog" aria-controls="petShopOverlay">
+        <span class="invIcon" aria-hidden="true"></span>
+        <span>Pet Shop</span>
+      </button>
+<button class="invBtn" id="openInvBtn" type="button" aria-haspopup="dialog" aria-controls="invOverlay">
+        <span class="invIcon" aria-hidden="true"></span>
+        <span>Inventory</span>
+        <span class="invBadge" id="invBadge">0</span>
+      </button>
+
+      <button class="invBtn" id="openCardsBtn" type="button" aria-haspopup="dialog" aria-controls="cardsOverlay">
+        <span class="invIcon" aria-hidden="true"></span>
+        <span>Cards</span>
+        <span class="invBadge" id="cardsBadge">0</span>
+      </button>
+
+
+      <div class="weatherWrap" id="weatherWrap" aria-label="Weather System">
+        <div class="weatherChip" id="weatherChip" tabindex="0" role="button" aria-haspopup="true" aria-label="Weather status">
+          <div class="weatherIconBox weather-normal" id="weatherIconBox">
+            <span class="weatherIcon" id="weatherIcon" aria-hidden="true">☀</span>
+            <span class="weatherTimer" id="weatherTimer">05:00</span>
+          </div>
+          <div class="weatherMini">
+            <div class="weatherMiniLabel">Weather</div>
+            <div class="weatherMiniCountdown" id="weatherCountdownText">Next event in: 05:00</div>
+          </div>
+          <div class="weatherTooltip" id="weatherTooltip" role="tooltip"></div>
+        </div>
+        <div class="weatherTicker" id="weatherTicker" aria-live="polite" style="display:none;"></div>
+      </div>
+
+      <button class="invBtn notifBtn" id="openNotifBtn" type="button" aria-haspopup="dialog" aria-controls="notifOverlay" aria-label="Open Notifications" title="Notifications">
+        <span class="notifBell" aria-hidden="true">🔔</span>
+        <span class="btnLabel">Notifications</span>
+        <span class="invBadge notifBadge" id="notifBadge" style="display:none;">0</span>
+      </button>
+
+    </div>
+  </div>
+</header>
+
+<section class="heroCard" aria-label="Featured Card">
+  <div class="heroInner" id="openSummoners" role="button" tabindex="0" aria-haspopup="dialog" aria-controls="summonersOverlay">
+    <div class="heroImgWrap">
+      <img class="heroImg" src="card.png" alt="Card artwork" loading="eager" decoding="async"
+           onerror="this.style.display='none'"/>
+    </div>
+  </div>
+</section>
+
+<section class="shop">
+  <div class="shop-label">MAIN SHOP</div>
+  <div class="shop-hint">Click a moving card to buy a pack. Packs go to Inventory.</div>
+
+  <div class="viewport">
+    <div class="track" id="track"></div>
+  </div>
+</section>
+
+<section class="slotPanels">
+  <div class="slotPanel">
+    <b>Deck A</b>
+    <div class="slotGrid" id="deckA"></div>
+  </div>
+  <div class="slotPanel">
+    <b>Deck B</b>
+    <div class="slotGrid" id="deckB"></div>
+  </div>
+</section>
+
+
+<section class="goldPlaceholder">
+  <div class="goldPlaceholderInner" id="openGoldPanel" role="button" tabindex="0" aria-label="Tower (click to collect stored gold)">
+    <img src="tower/t1.png" alt="Tower" class="goldPlaceholderCard" loading="lazy" decoding="async"
+         onerror="this.style.display='none'"/>
+    <div class="goldPlaceholderText">Tower</div>
+
+    <!-- Details shown on hover only -->
+    <div class="towerTooltip" id="towerTooltip" role="tooltip" aria-hidden="true">
+      <div class="ttTitle"><b>Tower</b><span class="ttPill">Click to collect</span></div>
+      <div class="ttLine">Gold/sec: <b><span id="towersRate">0</span></b></div>
+      <div class="ttLine">Stored: <b><span id="towersStored">0</span></b></div>
+      <div class="ttLine" id="towersCapLine">Cap: <b><span id="towersCap">0</span></b></div>
+    </div>
+  </div>
+</section>
+
+
+
+<!-- Gallery Modal -->
+<div class="modalOverlay" id="galleryOverlay" aria-hidden="true">
+  <div class="modal galleryModal" id="galleryModal" role="dialog" aria-modal="true" aria-labelledby="galleryTitle">
+    <div class="modalHead">
+      <b id="galleryTitle">Card Gallery</b>
+      <button class="closeBtn" id="closeGalleryBtn" type="button" aria-label="Close">✕</button>
+    </div>
+
+    <div class="modalBody galleryBody">
+      <div class="galleryTop">
+        <input id="gallerySearch" class="gallerySearch" type="search" placeholder="Search cards..." autocomplete="off" />
+        <div class="small muted" id="galleryCount">0 cards</div>
+      </div>
+
+      <div class="galleryGridWrap">
+        <div class="galleryGrid" id="galleryGrid"></div>
+        <p class="small" id="galleryEmpty" style="display:none;margin-top:12px;">No matching cards.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Deck Picker Modal -->
+<div class="modalOverlay" id="deckOverlay" aria-hidden="true">
+  <div class="modal deckModal" id="deckModal" role="dialog" aria-modal="true" aria-labelledby="deckTitle">
+    <div class="modalHead">
+      <b id="deckTitle">Select a Card</b>
+      <button class="closeBtn" id="closeDeckBtn" type="button">Close</button>
+    </div>
+
+    <div class="modalBody deckBody">
+      <div class="deckPickLeft">
+        <div class="deckHint" id="deckHint">Choose a card to place into the slot.</div>
+        <div class="deckPickGrid" id="deckPickGrid"></div>
+        <div class="deckEmpty" id="deckEmpty" style="display:none;">You don’t own any cards yet.</div>
+      </div>
+
+      <div class="deckPickRight">
+        <div class="deckDetailsTitle">Card Details</div>
+        <div class="deckDetailsCard">
+          <img id="deckDetailsImg" src="card.png" alt="Card preview" />
+          <div class="deckDetailsInfo">
+            <div class="deckDetailsName" id="deckDetailsName">—</div>
+            <div class="deckDetailsLine">Rarity: <span id="deckDetailsRarity">—</span></div>
+            <div class="deckDetailsLine">Pull chance: <span id="deckDetailsChance">—</span></div>
+            <div class="deckDetailsLine">Mutation: <span id="deckDetailsMutation">—</span></div>
+            <div class="deckDetailsLine">Gold/sec: <span id="deckDetailsGps">—</span></div>
+          </div>
+        </div>
+
+        <button class="primaryBtn" id="deckSelectBtn" type="button" disabled>Select for Slot</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Inventory Modal -->
+<div class="modalOverlay" id="invOverlay" aria-hidden="true">
+  <div class="modal invModal" id="invModal" role="dialog" aria-modal="true" aria-labelledby="invTitle">
+    <div class="modalHead">
+      <b id="invTitle">Inventory</b>
+      <button class="closeBtn" id="closeInvBtn" type="button">Close</button>
+    </div>
+
+    <div class="modalBody invBody">
+      <div class="invLayout">
+        <div class="invTabs" id="invTabs">
+          <button class="invTab isActive" data-tab="packs" type="button">
+            <span>Packs</span>
+            <span class="pill invTabBadge" id="invPacksBadge" style="display:none;">0</span>
+          </button>
+          <button class="invTab" data-tab="pets" type="button">
+            <span>Pets</span>
+            <span class="pill invTabBadge" id="invPetsBadge" style="display:none;">0</span>
+          </button>
+        </div>
+
+        <div class="invPanel">
+          <!-- Packs -->
+          <div class="invPanelSection" id="invPanelPacks">
+            <div class="invModalTop">
+              <p class="small">Total packs: <b id="invTotal">0</b></p>
+              <span class="small muted">Open packs to get cards.</span>
+            </div>
+
+            <div class="invModalGrid" id="invModalGrid"></div>
+            <p class="small" id="invModalEmpty" style="margin:10px 0 0; display:none;">No packs yet.</p>
+          </div>
+
+          <!-- Pets -->
+          <div class="invPanelSection" id="invPanelPets" style="display:none;">
+            <div class="petsGrid" id="invPetsGrid"></div>
+            <p class="small" id="invPetsEmpty" style="display:none;margin-top:12px;">You don’t own any pets yet.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="okRow">
+        <button class="btn btnPrimary" id="invOkBtn" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Rewards Modal -->
+<div class="modalOverlay" id="rewardsOverlay" aria-hidden="true">
+  <div class="modal rewardsModal" id="rewardsModal" role="dialog" aria-modal="true" aria-labelledby="rewardsTitle">
+    <div class="modalHead">
+      <b id="rewardsTitle">Rewards</b>
+      <button class="closeBtn" id="closeRewardsBtn" type="button">Close</button>
+    </div>
+
+    <div class="modalBody rewardsBody">
+      <div class="rewardGridWrap">
+        <div class="rewardGrid" id="rewardGrid"></div>
+      </div>
+
+      <div class="okRow">
+        <button class="btn btnPrimary okBtn" id="rewardsOkBtn" type="button" disabled>OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+<!-- Notifications Modal -->
+<div class="modalOverlay" id="notifOverlay" aria-hidden="true">
+  <div class="modal notifModal" id="notifModal" role="dialog" aria-modal="true" aria-labelledby="notifTitle">
+    <div class="modalHead">
+      <b id="notifTitle">Notifications</b>
+      <button class="closeBtn" id="closeNotifBtn" type="button">Close</button>
+    </div>
+
+    <div class="modalBody notifBody">
+      <div class="notifLayout">
+        <div class="notifTabs" id="notifTabs">
+          <button class="notifTab isActive" data-tab="rewards" type="button">
+            <span>Rewards</span>
+            <span class="pill notifTabBadge" id="notifRewardsBadge" style="display:none;">0</span>
+          </button>
+          <button class="notifTab" data-tab="lucky" type="button">Lucky Draw Gacha</button>
+          <button class="notifTab" data-tab="mutation" type="button">Mutation Machine <span class="muted">(Coming Soon)</span></button>
+          <button class="notifTab" data-tab="trade" type="button">Trade <span class="muted">(Coming Soon)</span></button>
+          <button class="notifTab" data-tab="settings" type="button">Settings <span class="muted">(Coming Soon)</span></button>
+        </div>
+
+        <div class="notifPanel">
+          <div id="notifContent"></div>
+        </div>
+      </div>
+
+      <div class="okRow">
+        <button class="btn btnPrimary" id="notifOkBtn" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Lucky Draw Result Modal -->
+<div class="modalOverlay" id="luckyResultOverlay" aria-hidden="true">
+  <div class="modal luckyResultModal" id="luckyResultModal" role="dialog" aria-modal="true" aria-labelledby="luckyResultTitle">
+    <div class="modalHead">
+      <b id="luckyResultTitle">Lucky Draw Reward</b>
+      <button class="closeBtn" id="closeLuckyResultBtn" type="button">Close</button>
+    </div>
+
+    <div class="modalBody luckyResultBody">
+      <div class="luckyResultCard">
+        <div class="luckyResultName" id="luckyResultName">—</div>
+        <div class="luckyResultImgWrap">
+          <img id="luckyResultImg" src="card.png" alt="Lucky draw reward" />
+        </div>
+        <div class="small muted" id="luckyResultMeta">—</div>
+      </div>
+
+      <div class="okRow">
+        <button class="btn btnPrimary" id="luckyResultOkBtn" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Cards Modal -->
+<div class="modalOverlay" id="cardsOverlay" aria-hidden="true">
+  <div class="modal" id="cardsModal" role="dialog" aria-modal="true" aria-labelledby="cardsTitle">
+    <div class="modalHead">
+      <b id="cardsTitle">Your Cards</b>
+      <button class="btn btnGhost" id="sellAllCardsBtn" type="button" title="Sell all cards in your collection">Sell All</button>
+      <button class="closeBtn" id="closeCardsBtn" type="button">Close</button>
+    </div>
+
+    <div class="modalBody cardsBody">
+    <div class="cardsTools">
+      <input id="cardsSearchInput" class="cardsSearch" type="text" placeholder="Search cards..." />
+      <div class="cardsCounts">
+        <span class="small">Total: <b id="cardsTotalCount">0</b></span>
+        <span class="small">Hearted Cards: <b id="cardsHeartedCount">0</b></span>
+      </div>
+    </div>
+
+      <div class="cardsGrid" id="cardsGrid"></div>
+      <p class="small" id="cardsEmpty" style="display:none;margin-top:12px;">You don’t own any cards yet.</p>
+      <div class="okRow">
+        <button class="btn btnPrimary" id="cardsOkBtn" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Pet Shop Modal -->
+<div class="modalOverlay" id="petShopOverlay" aria-hidden="true">
+  <div class="modal" id="petShopModal" role="dialog" aria-modal="true" aria-labelledby="petShopTitle">
+    <div class="modalHead">
+      <b id="petShopTitle">Pet Shop</b>
+      <button class="closeBtn" id="closePetShopBtn" type="button">Close</button>
+    </div>
+
+    <div class="modalBody">
+  <div class="comingSoonBox" role="status" aria-live="polite">
+    <div class="comingSoonTitle">Coming Soon</div>
+    <div class="small muted" style="margin-top:6px;">
+      The Pet Shop is under construction. Check back soon!
+    </div>
+  </div>
+
+  <div class="okRow">
+    <button class="btn btnPrimary" id="petShopOkBtn" type="button">Close</button>
+  </div>
+</div>
+</div>
+  </div>
+</div>
+
+<!-- Summoners Modal -->
+<div class="modalOverlay" id="summonersOverlay" aria-hidden="true">
+  <div class="modal summonersModal" id="summonersModal" role="dialog" aria-modal="true" aria-labelledby="summonersTitle">
+    <div class="modalHead">
+      <b id="summonersTitle">Summoners</b>
+      <button class="closeBtn" id="closeSummonersBtn" type="button">Close</button>
+    </div>
+
+    <div class="modalBody summonersBody">
+      <div class="summonersLayout">
+        <div class="summonersLeft">
+          <div class="summonersList" id="summonersList"></div>
+          <div class="summonersLeftBottom">
+            <div class="small muted" id="summonerOwnedHint">Selected: <span id="selectedSummonerName">Roylier</span></div>
+            <button class="btn btnPrimary" id="upgradeSummonerBtn" type="button">Upgrade</button>
+          </div>
+        </div>
+
+        <div class="summonersRight">
+          <div class="summonerDetails">
+            <div class="summonerTitleRow">
+              <b id="summonerDetailName">Roylier</b>
+              <span class="pill" id="summonerDetailLevel">Lv. 1</span>
+            </div>
+            <p class="small" id="summonerDetailText">Free summoner. A calm, efficient commander who boosts your collection journey.</p>
+            <div class="detailDivider"></div>
+            <div class="detailStats">
+              <div class="stat"><span class="muted">Bonus</span><b id="summonerBonusText">+0%</b></div>
+              <div class="stat"><span class="muted">Upgrade Cost</span><b id="summonerUpgradeCost">100</b></div>
+            </div>
+            <div class="detailDivider"></div>
+            <div class="summonerReq">
+              <div class="summonerReqTitle">Next Upgrade Requirements</div>
+              <div class="small" id="summonerReqText">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="okRow">
+        <button class="btn btnPrimary" id="summonersOkBtn" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Mobile Rotate Overlay (shows when phone is in portrait) -->
+<div id="rotateOverlay" class="rotateOverlay" aria-hidden="true">
+  <div class="rotateCard" role="status" aria-live="polite">
+    <div class="rotateIcon" aria-hidden="true">📱↻</div>
+    <div class="rotateTitle">Rotate your phone</div>
+    <div class="rotateText">For the best full performance, please rotate to <b>landscape</b> to continue the game.</div>
+    <div class="rotateHint">This message will disappear automatically once rotated.</div>
+  </div>
+</div>
+
+<div class="toastWrap" id="toasts"></div>
+
+
+  <div id="cardTooltip" class="cardTooltip" aria-hidden="true"></div>
+  <div id="deckCardActions" class="deckCardActions hidden" aria-hidden="true">
+    <div class="dcaHead"><b id="dcaTitle">Card</b><button id="dcaClose" class="closeBtn" type="button">×</button></div>
+    <div class="dcaBody">
+      <div class="dcaMeta" id="dcaMeta"></div>
+      <div class="dcaBtns">
+        <button id="dcaKeep" class="primaryBtn" type="button">Keep in Inventory</button>
+        <button id="dcaSell" class="dangerBtn" type="button">Sell Card</button>
+      </div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

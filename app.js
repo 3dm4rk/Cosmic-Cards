@@ -1,0 +1,4035 @@
+/* Premium Gacha — split files + LocalStorage
+   - Shop sells packs (rarity-based)
+   - Inventory stores packs (counts)
+   - Opening packs gives CARDS ONLY (NO GOLD)
+   - Cards modal shows your owned cards
+*/
+
+const LS_KEY = "gotcha_state_v1";
+
+/* ===============================
+   SOUND EFFECTS + MUSIC SYSTEM
+   - BGM loops: sfx/bg-music.mp3
+   - General click: sfx/click.mp3
+   - Purchase: sfx/purchase.mp3
+   - Tower collect: sfx/earn-gold.mp3
+   - Passive/ability gold: sfx/ability-gold.mp3
+   - Card opening (Inventory + Lucky Draw): sfx/opening-card.mp3
+   =============================== */
+const AudioSystem = (() => {
+  const safeAudio = (src) => {
+    const a = new Audio(src);
+    a.preload = "auto";
+    return a;
+  };
+
+  const sys = {
+    bgm: safeAudio("sfx/bg-music.mp3"),
+    click: safeAudio("sfx/click.mp3"),
+    purchase: safeAudio("sfx/purchase.mp3"),
+    tower: safeAudio("sfx/earn-gold.mp3"),
+    ability: safeAudio("sfx/ability-gold.mp3"),
+    openCard: safeAudio("sfx/opening-card.mp3"),
+    initialized: false,
+    _bgmStarted: false,
+
+    init() {
+      if (this.initialized) return;
+      this.initialized = true;
+
+      this.bgm.loop = true;
+      this.bgm.volume = 0.35;
+
+      const startBgmOnce = () => {
+        if (this._bgmStarted) return;
+        this._bgmStarted = true;
+        this.bgm.play().catch(() => {});
+      };
+
+      // Autoplay-safe: start on first user gesture
+      window.addEventListener("pointerdown", startBgmOnce, { once: true });
+      window.addEventListener("keydown", startBgmOnce, { once: true });
+    },
+
+    play(aud) {
+      if (!aud) return;
+      try {
+        aud.currentTime = 0;
+        aud.play().catch(() => {});
+      } catch (_) {}
+    }
+  };
+
+  return sys;
+})();
+AudioSystem.init();
+
+/* ===============================
+   ANTI-RIGHT-CLICK / ANTI-LONG-PRESS (Light deterrent)
+   - Desktop: blocks right-click context menu
+   - Mobile: blocks long-press callout on interactive elements without breaking scroll
+   NOTE: This does NOT provide real security (source can still be viewed). It's just UX.
+   =============================== */
+function setupAntiCheeseUX(){
+  // 1) Block context menu (desktop + many mobile browsers)
+  document.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+  }, { capture:true });
+
+  // 2) Prevent dragging images/cards (stops "save image" drag on desktop)
+  document.addEventListener("dragstart", (e) => {
+    const t = e.target;
+    if (!t) return;
+    if (t.tagName === "IMG" || t.closest?.("img") || t.closest?.(".card,.cardThumb,.rewardTile,.slot,.deckCard,.deckPickItem")){
+      e.preventDefault();
+    }
+  }, { capture:true });
+
+  // 3) Mobile long-press suppression (only on interactive targets; keep scrolling usable)
+  let lpTimer = null;
+  let startX = 0, startY = 0;
+  let active = false;
+
+  const cancel = () => {
+    active = false;
+    if (lpTimer){ clearTimeout(lpTimer); lpTimer = null; }
+  };
+
+  const isInteractiveTarget = (target) => {
+    if (!target) return false;
+    return !!target.closest?.("button,[role='button'],.clickable,.card,.cardThumb,.rewardTile,.slot,.deckSlot,.deckCard,.deckPickItem,img");
+  };
+
+  document.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    if (!isInteractiveTarget(e.target)) return;
+
+    active = true;
+    startX = e.clientX;
+    startY = e.clientY;
+
+    // If user holds ~420ms, treat as long-press and suppress browser callout.
+    lpTimer = setTimeout(() => {
+      if (!active) return;
+      // Prevent iOS/Android context menu / callout
+      try { e.preventDefault(); } catch(_){}
+      // Also stop propagation so no weird "ghost clicks"
+      try { e.stopPropagation(); } catch(_){}
+    }, 420);
+  }, { passive:false, capture:true });
+
+  document.addEventListener("pointermove", (e) => {
+    if (!active) return;
+    const dx = Math.abs(e.clientX - startX);
+    const dy = Math.abs(e.clientY - startY);
+    // If finger moves, user is likely scrolling—don't block.
+    if (dx > 10 || dy > 10) cancel();
+  }, { passive:true, capture:true });
+
+  document.addEventListener("pointerup", cancel, { passive:true, capture:true });
+  document.addEventListener("pointercancel", cancel, { passive:true, capture:true });
+
+  // Bonus: keep double-tap from zooming on some browsers while still allowing pinch-zoom on page
+  // (handled primarily by CSS touch-action + tap highlight removal)
+}
+// Detect hoverless touch devices (mobile/tablet). Used to switch hover UI to long-press on touch.
+const IS_HOVERLESS_TOUCH = (() => {
+  try { return window.matchMedia && window.matchMedia("(hover: none) and (pointer: coarse)").matches; }
+  catch(_) { return false; }
+})();
+
+function setupMobileHoverReplacements(){
+  if (!IS_HOVERLESS_TOUCH) return;
+
+  // Tower hover tooltip -> long-press (hold)
+  const towerWrap = document.getElementById("openGoldPanel");
+  const towerTip  = document.getElementById("towerTooltip");
+  if (towerWrap && towerTip){
+    const show = () => {
+      towerWrap.classList.add("lpShow");
+      towerTip.setAttribute("aria-hidden","false");
+    };
+    const hide = () => {
+      towerWrap.classList.remove("lpShow");
+      towerTip.setAttribute("aria-hidden","true");
+    };
+    bindLongPressHold(towerWrap, show, hide);
+  }
+
+  // Weather hover tooltip -> long-press (hold)
+  const wChip = document.getElementById("weatherChip");
+  const wTip  = document.getElementById("weatherTooltip");
+  if (wChip && wTip){
+    const show = () => {
+      wChip.classList.add("lpShow");
+      wTip.setAttribute("aria-hidden","false");
+    };
+    const hide = () => {
+      wChip.classList.remove("lpShow");
+      wTip.setAttribute("aria-hidden","true");
+    };
+    bindLongPressHold(wChip, show, hide);
+  }
+}
+
+setupAntiCheeseUX();
+setupMobileHoverReplacements();
+
+
+// Dedicated SFX helpers (call these inside logic)
+function playClickSFX(){ AudioSystem.play(AudioSystem.click); }
+function playPurchaseSFX(){ AudioSystem.play(AudioSystem.purchase); }
+function playTowerGoldSFX(){ AudioSystem.play(AudioSystem.tower); }
+function playAbilityGoldSFX(){ AudioSystem.play(AudioSystem.ability); }
+function playCardOpeningSFX(){ AudioSystem.play(AudioSystem.openCard); }
+
+// Global click SFX (all clickable UI), except elements flagged with data-sfx
+document.addEventListener("click", (e) => {
+  const el = e.target && e.target.closest && e.target.closest("button,[role='button'],.clickable,.card,.slot,.deckSlot,.deckCard");
+  if (!el) return;
+
+  const flagged = el.closest("[data-sfx]"); // purchase/tower/open-card/etc
+  if (flagged) return;
+
+  playClickSFX();
+}, true);
+
+const RARITIES = [
+  {k:"common",      w:60,  price:2000},
+  {k:"rare",        w:40,  price:3500},
+  {k:"epic",        w:15,  price:5000},
+  {k:"mythical",    w:10,  price:7500},
+  {k:"legendary",   w:3,   price:10000},
+  {k:"cosmic",      w:1,   price:25000},
+  {k:"interstellar",w:0.5, price:1000000}
+];
+const totalW = RARITIES.reduce((a,r)=>a+r.w,0);
+
+const CARD_REWARDS = {
+  common: [
+{ name:"Daysi", img:"cards/daysi.png", w:25 },
+    { name:"Patrick the Destroyer", img:"cards/patrick-the-destroyer.png", w:10 },
+    { name:"Angelo", img:"cards/angelo.png", w:50 },
+    { name:"Lucky Cat", img:"cards/lucky-cat.png", w:50 },
+    { name:"Space Patrol", img:"cards/space-patrol.png", w:50 }
+  ],
+  rare: [
+    { name:"Baltrio", img:"cards/baltrio.png", w:50 },
+    { name:"Nebula Gunslinger", img:"cards/nebula-gunslinger.png", w:20 },
+    { name:"Nova Empress", img:"cards/nova-empress.png", w:20 },
+    { name:"Celestial Priestess", img:"cards/celestial-priestess.png", w:50 },
+    { name:"Dr. Nemesis", img:"cards/dr-nemesis.png", w:0.7 },
+    { name:"Otehnsahorse", img:"cards/ohtensahorse.png", w:10 }
+  ],
+  epic: [
+    { name:"3dm4rk", img:"cards/3dm4rk.png", w:5 },
+    { name:"Tremo", img:"cards/tremo.png", w:20 },
+    { name:"Holly Child", img:"cards/holly-child.png", w:20 },
+    { name:"Ey-Ji-Es", img:"cards/eyjies.png", w:10 },
+    { name:"Stakes Staker", img:"cards/stakesStaker.png", w:5 },
+    { name:"Diablo", img:"cards/diablo.png", w:50 },
+    { name:"Spidigong", img:"cards/spidigong.png", w:1 }
+  ],
+  mythical: [
+    { name:"Halaka", img:"cards/halaka1.png", w:50 },
+    { name:"Void Samurai", img:"cards/void-samurai.png", w:20 },
+    { name:"Space Duelist", img:"cards/space-duelist.png", w:5 },
+    { name:"Void Chronomancer", img:"cards/void-chronomancer.png", w:40 },
+    { name:"Starbreaker Null King", img:"cards/start-breaker-null-king.png", w:5 },
+    { name:"Astro Witch", img:"cards/astro-witch.png", w:60 }
+  ],
+  legendary: [
+    { name:"Yrol", img:"cards/yrol.png", w:5 },
+    { name:"Zukinimato", img:"cards/zukinimato1.png", w:60 },
+    { name:"Abarskie", img:"cards/abarskie.png", w:5 },
+    { name:"LeiRality", img:"cards/LeiRality.png", w:1 },
+    { name:"621", img:"cards/621.png", w:40 },
+    { name:"Alric", img:"cards/alric.png", w:8 }
+  ],
+  cosmic: [
+    { name:"Omni", img:"cards/omni.png", w:0.7 },
+    { name:"Entity", img:"cards/entity.png", w:10 },
+    { name:"Awakened Monster", img:"cards/am.png", w:2 },
+    { name:"Anti Matter", img:"cards/anti-matter.png", w:5 },
+    { name:"Rah Bill", img:"cards/rah-bill.png", w:60 },
+    { name:"Cosmo Revelation", img:"cards/cm.png", w:1 },
+    { name:"Cosmic God", img:"cards/cosmic-god.png", w:30 }
+  ],
+  interstellar: [
+    { name:"Joe", img:"cards/joe.png", w:60 },
+    { name:"Meowl", img:"cards/meowl.png", w:0.2 },
+    { name:"Emerald Emperor", img:"cards/ee.png", w:0.1 },
+    { name:"Skwikik", img:"cards/skwikik.png", w:40 },
+    { name:"Space Hen", img:"cards/spacehen.png", w:50 }
+  ]
+};
+
+// === FIXED Gold per Second per Card (balanced + predictable) ===
+// === FIXED Gold per Second per Card (balanced + predictable) ===
+const CARD_GPS = {
+  // 🟤 COMMON
+  "Daysi": 11,
+  "Patrick the Destroyer": 90,
+  "Angelo": 12,
+  "Lucky Cat": 12,
+  "Space Patrol": 8,
+
+  // 🔵 RARE
+  "Baltrio": 15,
+  "Nebula Gunslinger": 100,
+  "Nova Empress": 17,
+  "Celestial Priestess": 16,
+  "Dr. Nemesis": 1000,
+  "Otehnsahorse": 12,
+  "Phantom Thief": 30,
+
+  // 🟣 EPIC
+  "3dm4rk": 120,
+  "Tremo": 25,
+  "Holly Child": 25,
+  "Ey-Ji-Es": 27,
+  "Stakes Staker": 30,
+  "Diablo": 24,
+  "Spidigong": 500,
+  "Slime King": 120,
+
+  // 🔴 MYTHICAL
+  "Halaka": 30,
+  "Void Samurai": 110,
+  "Space Duelist": 400,
+  "Void Chronomancer": 60,
+  "Starbreaker Null King": 400,
+  "Astro Witch": 35,
+
+  // 🟡 LEGENDARY
+  "Yrol": 400,
+  "Zukinimato": 45,
+  "Abarskie": 400,
+  "LeiRality": 1500,
+
+  // ✅ NEW LEGENDARY
+  "621": 60,
+  "Alric": 250,
+
+  // 🌌 COSMIC
+  "Omni": 5000,
+  "Entity": 800,
+  "Awakened Monster": 2500,
+  "Anti Matter": 3500,
+  "Rah Bill": 500,
+  "Cosmo Revelation": 4500,
+  "Cosmic God": 550,
+  "The World": 1500,
+
+  // 🌠 INTERSTELLAR
+  "Joe": 200,
+  "Meowl": 100000,
+  "Emerald Emperor": 200000,
+  "Skwikik": 250,
+  "Space Hen": 150
+
+};
+
+
+// Gold-per-second multipliers by rarity (higher rarity = better gold/sec)
+const RARITY_GPS_MULT = {
+  common: 1,
+  rare: 2,
+  epic: 3,
+  mythical: 4,
+  legendary: 6,
+  cosmic: 10,
+  interstellar: 15
+};
+
+// Mutation roll table (applies to ALL opened cards, any rarity)
+const MUTATIONS = [
+  { k: "Normal",   chance: 0.695, mult: 1.0 },
+  { k: "Silver",   chance: 0.10,  mult: 1.3 },
+  { k: "Gold",     chance: 0.05,  mult: 2.0 },
+  { k: "Diamond",  chance: 0.03,  mult: 3.0 },
+  { k: "Rainbow",  chance: 0.01,  mult: 5.0 },
+  // ✅ NEW
+  { k: "Neon",     chance: 0.009, mult: 8.0 },
+  { k: "Galactic", chance: 0.005, mult: 10.0 },
+];
+
+
+/* ================= Weather System (stateful events) =================
+   - Rolls every 5 minutes (no extra cooldown after an event)
+   - Special events last 30s with 3 strike attempts (every 10s)
+   - Strikes can add STACKABLE mutations (unique per mutation key)
+*/
+const WEATHER_EVENT_INTERVAL_MS = 5 * 60 * 1000;
+const WEATHER_EVENT_DURATION_MS = 30 * 1000;
+const WEATHER_STRIKE_INTERVAL_MS = 10 * 1000;
+const WEATHER_STRIKE_ATTEMPTS = 3;
+const WEATHER_STRIKE_CHANCE = 0.10;
+
+const WEATHER_TABLE = [
+  { key:"normal",      name:"Normal Weather", icon:"☀", chance:60, special:false },
+  { key:"spacestorm",  name:"Space Storm",    icon:"🌩", chance:10, special:true, mutation:"Thunder",  mult:2 },
+  { key:"antigravity", name:"Anti-Gravity",   icon:"🪐", chance:5,  special:true, mutation:"Blackhole", mult:3 },
+  { key:"ascension",   name:"Ascension",      icon:"✨", chance:3,  special:true, mutation:"Godly",    mult:4 },
+  { key:"multiverse",  name:"Multiverse",     icon:"🌌", chance:1,  special:true, mutation:"Heavenly", mult:5 },
+];
+
+const MUTATION_MULTS = {
+  normal: 1.0,
+  silver: 1.3,
+  gold: 2.0,
+  diamond: 3.0,
+  rainbow: 5.0,
+  neon: 8.0,
+  galactic: 10.0,
+
+  // Weather mutations
+  thunder: 2.0,
+  blackhole: 3.0,
+  godly: 4.0,
+  heavenly: 5.0,
+};
+
+const auraVarByRarity = {
+  common:   "var(--common)",
+  rare:     "var(--rare)",
+  epic:     "var(--epic)",
+  mythical: "var(--mythical)",
+  legendary:"var(--legendary)",
+  cosmic:   "var(--cosmic)",
+  interstellar: "var(--interstellar)"
+};
+
+const invOrder = ["interstellar","cosmic","legendary","mythical","epic","rare","common"];
+
+/* ================= STATE (persisted) ================= */
+let state = loadState();
+ensureDecks();
+ensureTowers();
+ensureWeather();
+ensureNotifications();
+migrateCards();
+ensureDeckSlotPurchases();
+ensureDeckCardLocations();
+ensureDeckCardLocations();
+if (!state.summoners || typeof state.summoners !== 'object') state.summoners = {selectedId:'3dm4rk', owned:['3dm4rk'], levels:{'3dm4rk':1}, nextBonusAt: Date.now()+15000, nextZenoAt: Date.now()+60000};
+if (!Number.isFinite(state.summoners.nextBonusAt)) state.summoners.nextBonusAt = Date.now()+15000;
+
+if (!Number.isFinite(state.summoners.nextZenoAt)) state.summoners.nextZenoAt = Date.now()+60000;
+
+
+/* ================= DOM ================= */
+const track = document.getElementById("track");
+const goldEl = document.getElementById("gold");
+
+
+const openGalleryBtn = document.getElementById("openGalleryBtn");
+const galleryOverlay = document.getElementById("galleryOverlay");
+const galleryGrid = document.getElementById("galleryGrid");
+const gallerySearch = document.getElementById("gallerySearch");
+const galleryEmpty = document.getElementById("galleryEmpty");
+const galleryCount = document.getElementById("galleryCount");
+const closeGalleryBtn = document.getElementById("closeGalleryBtn");
+
+
+const heroImg = document.querySelector(".heroImg");
+
+const openInvBtn = document.getElementById("openInvBtn");
+const invBadge = document.getElementById("invBadge");
+const invOverlay = document.getElementById("invOverlay");
+const invModalGrid = document.getElementById("invModalGrid");
+const invModalEmpty = document.getElementById("invModalEmpty");
+const invTotalEl = document.getElementById("invTotal");
+const invOkBtn = document.getElementById("invOkBtn");
+const closeInvBtn = document.getElementById("closeInvBtn");
+
+const openCardsBtn = document.getElementById("openCardsBtn");
+const cardsBadge = document.getElementById("cardsBadge");
+
+// Weather System UI
+const weatherWrap = document.getElementById("weatherWrap");
+const weatherChip = document.getElementById("weatherChip");
+const weatherIconBox = document.getElementById("weatherIconBox");
+const weatherIcon = document.getElementById("weatherIcon");
+const weatherTimer = document.getElementById("weatherTimer");
+const weatherCountdownText = document.getElementById("weatherCountdownText");
+const weatherTooltip = document.getElementById("weatherTooltip");
+const weatherTicker = document.getElementById("weatherTicker");
+
+
+// Notifications System UI
+const openNotifBtn = document.getElementById("openNotifBtn");
+const notifBadge = document.getElementById("notifBadge");
+const notifOverlay = document.getElementById("notifOverlay");
+const notifTabs = document.getElementById("notifTabs");
+const notifContent = document.getElementById("notifContent");
+const notifOkBtn = document.getElementById("notifOkBtn");
+const closeNotifBtn = document.getElementById("closeNotifBtn");
+const notifRewardsBadge = document.getElementById("notifRewardsBadge");
+
+// Lucky draw result modal
+const luckyResultOverlay = document.getElementById("luckyResultOverlay");
+const luckyResultName = document.getElementById("luckyResultName");
+const luckyResultImg = document.getElementById("luckyResultImg");
+const luckyResultMeta = document.getElementById("luckyResultMeta");
+const luckyResultOkBtn = document.getElementById("luckyResultOkBtn");
+const closeLuckyResultBtn = document.getElementById("closeLuckyResultBtn");
+
+// Deck picker modal
+const deckOverlay = document.getElementById("deckOverlay");
+const closeDeckBtn = document.getElementById("closeDeckBtn");
+const deckPickGrid = document.getElementById("deckPickGrid");
+const deckEmpty = document.getElementById("deckEmpty");
+const deckHint = document.getElementById("deckHint");
+const deckSelectBtn = document.getElementById("deckSelectBtn");
+const deckDetailsImg = document.getElementById("deckDetailsImg");
+const deckDetailsName = document.getElementById("deckDetailsName");
+const deckDetailsRarity = document.getElementById("deckDetailsRarity");
+const deckDetailsChance = document.getElementById("deckDetailsChance");
+const deckDetailsMutation = document.getElementById("deckDetailsMutation");
+const deckDetailsGps = document.getElementById("deckDetailsGps");
+
+let deckPicking = null; // { deckKey, idx, selectedCardId }
+
+const cardsOverlay = document.getElementById("cardsOverlay");
+const cardsGrid = document.getElementById("cardsGrid");
+const cardsSearchInput = document.getElementById("cardsSearchInput");
+const cardsTotalCount = document.getElementById("cardsTotalCount");
+const cardsHeartedCount = document.getElementById("cardsHeartedCount");
+const cardsEmpty = document.getElementById("cardsEmpty");
+const cardsOkBtn = document.getElementById("cardsOkBtn");
+const closeCardsBtn = document.getElementById("closeCardsBtn")
+const openPetShopBtn = document.getElementById("openPetShopBtn");
+const petShopOverlay = document.getElementById("petShopOverlay");
+const petShopGrid = document.getElementById("petShopGrid");
+const petRestockTimer = document.getElementById("petRestockTimer");
+const petShopOkBtn = document.getElementById("petShopOkBtn");
+const closePetShopBtn = document.getElementById("closePetShopBtn");
+
+// Inventory tabs (Packs / Pets)
+const invTabs = document.getElementById("invTabs");
+const invPanelPacks = document.getElementById("invPanelPacks");
+const invPanelPets = document.getElementById("invPanelPets");
+const invPacksBadge = document.getElementById("invPacksBadge");
+const invPetsBadge = document.getElementById("invPetsBadge");
+
+// Pets live inside Inventory now
+const invPetsGrid = document.getElementById("invPetsGrid");
+const invPetsEmpty = document.getElementById("invPetsEmpty");
+
+const openSummoners = document.getElementById("openSummoners");
+const summonersOverlay = document.getElementById("summonersOverlay");
+const summonersList = document.getElementById("summonersList");
+const selectedSummonerName = document.getElementById("selectedSummonerName");
+const summonerDetailName = document.getElementById("summonerDetailName");
+const summonerDetailLevel = document.getElementById("summonerDetailLevel");
+const summonerDetailText = document.getElementById("summonerDetailText");
+const summonerBonusText = document.getElementById("summonerBonusText");
+const summonerUpgradeCost = document.getElementById("summonerUpgradeCost");
+const summonerReqText = document.getElementById("summonerReqText");
+const upgradeSummonerBtn = document.getElementById("upgradeSummonerBtn");
+const summonersOkBtn = document.getElementById("summonersOkBtn");
+const closeSummonersBtn = document.getElementById("closeSummonersBtn");
+
+const openGoldPanel = document.getElementById("openGoldPanel");
+;
+
+const rewardsOverlay = document.getElementById("rewardsOverlay");
+const rewardGrid = document.getElementById("rewardGrid");
+const rewardsOkBtn = document.getElementById("rewardsOkBtn");
+const closeRewardsBtn = document.getElementById("closeRewardsBtn");
+
+const toasts = document.getElementById("toasts");
+
+
+/* ===============================
+   MOBILE ROTATE OVERLAY
+   - Shows a full-screen message when on a mobile device in portrait orientation
+   =============================== */
+const rotateOverlay = document.getElementById("rotateOverlay");
+
+function isMobileLike(){
+  // Prefer capability detection over UA sniffing
+  const coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+  const smallScreen = Math.min(window.innerWidth, window.innerHeight) <= 820;
+  return coarse && smallScreen;
+}
+
+function isPortrait(){
+  // Works even when screen.orientation isn't available
+  return window.innerHeight > window.innerWidth;
+}
+
+function updateRotateOverlay(){
+  if (!rotateOverlay) return;
+  const shouldShow = isMobileLike() && isPortrait();
+  rotateOverlay.classList.toggle("show", shouldShow);
+  rotateOverlay.setAttribute("aria-hidden", shouldShow ? "false" : "true");
+  document.body.classList.toggle("rotateLock", shouldShow);
+}
+
+function setupRotateOverlay(){
+  updateRotateOverlay();
+  window.addEventListener("resize", updateRotateOverlay, { passive:true });
+  window.addEventListener("orientationchange", updateRotateOverlay, { passive:true });
+  document.addEventListener("visibilitychange", updateRotateOverlay, { passive:true });
+
+  // Some browsers expose screen.orientation change events
+  try{
+    if (screen.orientation && typeof screen.orientation.addEventListener === "function"){
+      screen.orientation.addEventListener("change", updateRotateOverlay);
+    }
+  }catch(_){}
+}
+setupRotateOverlay();
+
+/* ================= SHOP SCROLLER ================= */
+let stock = [];
+let x = 0;
+const speed = 120;
+let lastTime = performance.now();
+
+function fmt(n){ return n.toLocaleString("en-US"); }
+
+
+function updateGoldUI(){
+  if (!goldEl) return;
+  goldEl.textContent = fmt(state.gold);
+
+  // Premium "pop" when gold changes (subtle, not annoying)
+  goldEl.classList.remove("goldPulse");
+  // Restart CSS animation reliably
+  void goldEl.offsetWidth;
+  goldEl.classList.add("goldPulse");
+}
+
+function uid(){
+  return (crypto?.randomUUID?.() ?? (Math.random().toString(16).slice(2) + "-" + Date.now().toString(16)));
+}
+
+
+
+/* ================= PETS + SUMMONERS CATALOG ================= */
+const PET_CATALOG = [
+  { id:"test1", name:"Test 1", img:"card.png", price:100 },
+  { id:"test2", name:"Test 2", img:"card.png", price:200 }
+];
+
+const SUMMONER_CATALOG = [
+  { id:"3dm4rk", name:"Roylier", img:"summoners/roylier.png", heroImg:"summoners/roylier.png", free:true, desc:"Free summoner. A calm, efficient commander who boosts your collection journey." },
+  { id:"nova",  name:"Nova",  img:"summoners/nova.png",  heroImg:"summoners/nova.png",  free:false, desc:"A star-forged tactician. Specializes in quick upgrades and shiny loot." },
+  { id:"ember", name:"Ember", img:"summoners/ember.png", heroImg:"summoners/ember.png", free:false, desc:"A blazing duelist. Brings aggressive momentum to your pulls." },
+  { id:"aegis", name:"Aegis", img:"summoners/aegis.png", heroImg:"summoners/aegis.png", free:false, desc:"A defensive guardian. Keeps you stable when luck is cold." },
+  { id:"void",  name:"Void",  img:"summoners/void.png",  heroImg:"summoners/void.png",  free:false, desc:"A cosmic anomaly. High risk, high reward vibes." },
+  { id:"zioti", name:"Zioti", img:"summoners/zioti.png", heroImg:"summoners/zioti.png", free:false, desc:"A tower-blooded architect. Unlocks Deck B slots 7–9 (purchase-only) and grants strong tower income." },
+  { id:"zeno",  name:"Zeno",  img:"summoners/zeno.png",  heroImg:"summoners/zeno.png",  free:false, desc:"Final summoner. Every minute: 50% chance to gain +1,000,000 gold." }
+];
+
+
+/* ================= SUMMONER PROGRESSION RULES ================= */
+/*
+  IMPORTANT DESIGN (progression + active effects)
+  - Progression (permanent): owning summoners unlocks *permission* to buy more deck slots.
+    Purchased slots stay unlocked forever, even if you switch summoners.
+  - Active effects (temporary): ONLY the currently selected summoner provides bonus gold / tower cap / pets limit.
+*/
+
+const SUMMONER_ORDER = ["3dm4rk","nova","ember","aegis","void","zioti","zeno"];
+
+function getSummonerIdForTier(tier){
+  const i = clamp((Number(tier)||1)-1, 0, SUMMONER_ORDER.length-1);
+  return SUMMONER_ORDER[i];
+}
+
+
+function summonerTierOfId(id){
+  const idx = SUMMONER_ORDER.indexOf(String(id||""));
+  return (idx >= 0) ? (idx + 1) : 1;
+}
+
+function getActiveSummonerId(){
+  const owned = state?.summoners?.owned || [];
+  const sel = state?.summoners?.selectedId || "3dm4rk";
+  if (owned.includes(sel)) return sel;
+  // fallback to first owned or main
+  return owned[0] || "3dm4rk";
+}
+
+function getSummonerTier(){
+  // Tier for ACTIVE effects
+  return summonerTierOfId(getActiveSummonerId());
+}
+
+function getProgressionTier(){
+  // Highest owned tier (progression gate)
+  const owned = state?.summoners?.owned || [];
+  let maxTier = 1;
+  for (const id of owned){
+    maxTier = Math.max(maxTier, summonerTierOfId(id));
+  }
+  return maxTier;
+}
+
+function getSummonerDef(id){
+  return SUMMONER_CATALOG.find(x=>x.id===id) || SUMMONER_CATALOG[0];
+}
+
+function petLimitForTier(tier){
+  // Active effects by tier (SPEC)
+  // 1: 3dm4rk -> 1 pet
+  // 2: Nova   -> 2 pets
+  // 3: Ember  -> 3 pets
+  // 4: Aegis  -> 4 pets
+  // 5: Void   -> 5 pets
+  // 6: Zioti  -> 6 pets
+  if (tier >= 6) return 6;
+  if (tier >= 5) return 5;
+  if (tier >= 4) return 4;
+  if (tier >= 3) return 3;
+  if (tier >= 2) return 2;
+  return 1;
+}
+function towerMultiplierForTier(tier){
+  if (tier >= 5) return 2.5;   // Void (optional spice)
+  if (tier >= 3) return 2.0;   // Ember/Aegis
+  if (tier >= 2) return 1.5;   // Nova
+  return 1.0;
+}
+function towerCapForTier(tier){
+  // Tower storage cap by tier (IMPORTANT: this should NOT cap the player's main gold)
+  // Zeno: tower cap 1,000,000
+  if (tier >= 7) return 1000000; // Zeno (SPEC)
+  // Zioti SPEC: 200,000 cap
+  if (tier >= 6) return 200000; // Zioti (SPEC)
+  // Existing progression caps
+  if (tier >= 5) return 200000; // Void
+  if (tier >= 4) return 150000; // Aegis
+  if (tier >= 3) return 100000; // Ember
+  if (tier >= 2) return 50000;  // Nova
+  return 20000;                 // 3dm4rk
+}
+function bonusGoldPer15sForTier(tier){
+  // Active bonus by tier
+  // Zeno SPEC: uses a separate 1-minute RNG bonus (no fixed 15s bonus)
+  if (tier >= 7) return 0;
+  // Zioti SPEC: +1,500 gold every 15 seconds
+  if (tier >= 6) return 1500; // Zioti (SPEC)
+  // Keep existing balance for earlier summoners
+  if (tier >= 5) return 2000; // Void
+  if (tier >= 4) return 1000; // Aegis
+  if (tier >= 3) return 1000; // Ember
+  if (tier >= 2) return 500;  // Nova
+  return 0;
+}
+
+function onActiveSummonerChanged(){
+  // Reset bonus timers so previous summoner effects don't linger
+  if (state?.summoners){
+    state.summoners.nextBonusAt = Date.now() + 15000;
+    state.summoners.nextZenoAt = Date.now() + 60000;
+  }
+
+  // Enforce tower cap immediately (do NOT cap main gold)
+  const cap = towerCapForTier(getSummonerTier());
+  if (state?.towers && Number.isFinite(state.towers.stored) && state.towers.stored > cap){
+    state.towers.stored = cap;
+  }
+
+  saveState(state);
+  syncUI();
+}
+
+function getMainSummonerId(){
+  return "3dm4rk";
+}
+
+function getUpgradeRequirementsForLevel(lv){
+  const cost = summonerUpgradeCostForLevel(lv);
+  const nextTier = lv + 1;
+  const reqs = [];
+  if (cost === Infinity) return { cost, nextTier, reqs, max:true };
+
+  reqs.push({ key:"gold", label:`Have ${fmt(cost)} gold`, ok: (state.gold >= cost) });
+
+  if (lv === 1){
+    const rarest = getRarestCardDefByRarity("common");
+    reqs.push({ key:"card_common", label:`Own the rarest Common card (${rarest ? rarest.name : "?"})`, ok: ownsRarestCardOfRarity("common") });
+  } else if (lv === 2){
+    const rarest = getRarestCardDefByRarity("rare");
+    reqs.push({ key:"card_rare", label:`Own the rarest Rare card (${rarest ? rarest.name : "?"})`, ok: ownsRarestCardOfRarity("rare") });
+  } else if (lv === 3){
+    // UPDATED: Ember -> Aegis now requires EPIC (not Mythical)
+    const rarest = getRarestCardDefByRarity("epic");
+    reqs.push({ key:"card_epic", label:`Own the rarest Epic card (${rarest ? rarest.name : "?"})`, ok: ownsRarestCardOfRarity("epic") });
+  } else if (lv === 4){
+    const rarest = getRarestCardDefByRarity("mythical");
+    reqs.push({ key:"card_mythical", label:`Own the rarest Mythical card (${rarest ? rarest.name : "?"})`, ok: ownsRarestCardOfRarity("mythical") });
+  } else if (lv === 5){
+    const rarest = getRarestCardDefByRarity("legendary");
+    reqs.push({ key:"card_legendary", label:`Own the rarest Legendary card (${rarest ? rarest.name : "?"})`, ok: ownsRarestCardOfRarity("legendary") });
+  } else if (lv === 6){
+    const rLeg = getRarestCardDefByRarity("legendary");
+    const rCos = getRarestCardDefByRarity("cosmic");
+    reqs.push({ key:"card_legendary", label:`Own the rarest Legendary card (${rLeg ? rLeg.name : "?"})`, ok: ownsRarestCardOfRarity("legendary") });
+    reqs.push({ key:"card_cosmic", label:`Own the rarest Cosmic card (${rCos ? rCos.name : "?"})`, ok: ownsRarestCardOfRarity("cosmic") });
+  }
+
+  return { cost, nextTier, reqs, max:false };
+}
+
+function getRarestCardDefByRarity(rarityKey){
+  const pool = CARD_REWARDS[rarityKey];
+  if (!Array.isArray(pool) || pool.length === 0) return null;
+  // rarest = smallest pull weight/chance (w)
+  let best = pool[0];
+  for (const c of pool){
+    const cw = Number(c.pullChance ?? c.w ?? 0);
+    const bw = Number(best.pullChance ?? best.w ?? 0);
+    if (cw < bw) best = c;
+  }
+  return best;
+}
+function ownsRarestCardOfRarity(rarityKey){
+  const rarest = getRarestCardDefByRarity(rarityKey);
+  if (!rarest) return false;
+  const targetName = String(rarest.name||"").toLowerCase();
+  return state.cardsOwned.some(c => String(c.name||"").toLowerCase() === targetName && String(c.rarity||"").toLowerCase() === String(rarityKey).toLowerCase());
+}
+function canUpgradeMainSummoner(){
+  const id = getMainSummonerId();
+  const lv = getSummonerLevel(id);
+  const cost = summonerUpgradeCostForLevel(lv);
+  if (!Number.isFinite(cost) || cost === Infinity) return { ok:false, reason:"Max level reached." };
+
+  // Card requirements
+  if (lv === 1){
+    if (!ownsRarestCardOfRarity("common")) return { ok:false, reason:"Need the rarest Common card." };
+  } else if (lv === 2){
+    if (!ownsRarestCardOfRarity("rare")) return { ok:false, reason:"Need the rarest Rare card." };
+  } else if (lv === 3){
+    // UPDATED: Ember -> Aegis uses Epic
+    if (!ownsRarestCardOfRarity("epic")) return { ok:false, reason:"Need the rarest Epic card." };
+  } else if (lv === 4){
+    if (!ownsRarestCardOfRarity("mythical")) return { ok:false, reason:"Need the rarest Mythical card." };
+  } else if (lv === 5){
+    if (!ownsRarestCardOfRarity("legendary")) return { ok:false, reason:"Need the rarest Legendary card." };
+  } else if (lv === 6){
+    if (!ownsRarestCardOfRarity("legendary")) return { ok:false, reason:"Need the rarest Legendary card." };
+    if (!ownsRarestCardOfRarity("cosmic")) return { ok:false, reason:"Need the rarest Cosmic card." };
+  }
+
+  if (state.gold < cost) return { ok:false, reason:`Need ${fmt(cost)} gold.` };
+  return { ok:true, reason:"" };
+}
+
+
+// === Deck B slot costs (edit anytime) ===
+// SPEC: Deck B slots are NEVER free. Unlocking a summoner only grants permission to BUY these slots.
+// Index 0 = Slot 1, ... Index 8 = Slot 9
+const DECK_B_SLOT_COSTS = [
+  5000, 5000, 5000, // B1–3 (Aegis permission)
+  5000, 5000, 5000, // B4–6 (Void permission)
+  15000,15000,15000 // B7–9 (Zioti permission)
+];
+
+function ensureDeckSlotPurchases(){
+  if (!state.deckSlotPurchases || typeof state.deckSlotPurchases !== "object"){
+    state.deckSlotPurchases = { A: Array(9).fill(false), B: Array(9).fill(false) };
+  }
+  if (!Array.isArray(state.deckSlotPurchases.A)) state.deckSlotPurchases.A = Array(9).fill(false);
+  if (!Array.isArray(state.deckSlotPurchases.B)) state.deckSlotPurchases.B = Array(9).fill(false);
+  if (state.deckSlotPurchases.A.length !== 9) state.deckSlotPurchases.A = Array(9).fill(false).map((_,i)=>!!state.deckSlotPurchases.A[i]);
+  if (state.deckSlotPurchases.B.length !== 9) state.deckSlotPurchases.B = Array(9).fill(false).map((_,i)=>!!state.deckSlotPurchases.B[i]);
+
+  // Deck A slots 1–3 are always free/unlocked
+  for (let i=0;i<3;i++){
+    state.deckSlotPurchases.A[i] = true;
+  }
+
+  // Deck B slots are NEVER free in this ruleset.
+  // Owning Aegis/Void/Zioti only makes certain Deck B slots *purchasable* (handled in getDeckSlotStatus).
+}
+
+
+function getDeckSlotStatus(deckKey, idx){
+  ensureDeckSlotPurchases();
+  ensureDeckCardLocations();
+
+  const purchased = !!state.deckSlotPurchases?.[deckKey]?.[idx];
+  const progTier = getProgressionTier();
+
+  // Deck A: Slots 1–3 always free
+  if (deckKey === "A"){
+    if (idx <= 2) return { status:"unlocked", purchased:true, price:0 };
+
+    // Slots 4–6: unlockable once NOVA is owned; 5,000g each
+    if (idx >= 3 && idx <= 5){
+      if (progTier < 2) return { status:"locked", purchased:false, price:5000, reason:"Requires Nova" };
+      if (purchased) return { status:"unlocked", purchased:true, price:0 };
+      return { status:"purchasable", purchased:false, price:5000 };
+    }
+
+    // Slots 7–9: unlockable once EMBER is owned; 15,000g each
+    if (idx >= 6 && idx <= 8){
+      if (progTier < 3) return { status:"locked", purchased:false, price:15000, reason:"Requires Ember" };
+      if (purchased) return { status:"unlocked", purchased:true, price:0 };
+      return { status:"purchasable", purchased:false, price:15000 };
+    }
+  }
+
+  // Deck B: gated by summoners, PURCHASE-ONLY (SPEC)
+  if (deckKey === "B"){
+    // Entire Deck B is unavailable until Aegis is owned
+    if (progTier < 4){
+      return { status:"locked", purchased:false, price:0, reason:"Requires Aegis" };
+    }
+
+    // Slots 1–3: purchasable once Aegis is owned
+    if (idx >= 0 && idx <= 2){
+      const price = DECK_B_SLOT_COSTS[idx] || 0;
+      if (purchased) return { status:"unlocked", purchased:true, price:0 };
+      return { status:"purchasable", purchased:false, price };
+    }
+
+    // Slots 4–6: purchasable once Void is owned
+    if (idx >= 3 && idx <= 5){
+      const price = DECK_B_SLOT_COSTS[idx] || 0;
+      if (progTier < 5) return { status:"locked", purchased:false, price, reason:"Requires Void" };
+      if (purchased) return { status:"unlocked", purchased:true, price:0 };
+      return { status:"purchasable", purchased:false, price };
+    }
+
+    // Slots 7–9: purchasable once Zioti is owned
+    if (idx >= 6 && idx <= 8){
+      const price = DECK_B_SLOT_COSTS[idx] || 0;
+      if (progTier < 6) return { status:"locked", purchased:false, price, reason:"Requires Zioti" };
+      if (purchased) return { status:"unlocked", purchased:true, price:0 };
+      return { status:"purchasable", purchased:false, price };
+    }
+  }
+
+  return { status:"locked", purchased:false, price:0 };
+}
+
+
+function purchaseDeckSlot(deckKey, idx){
+  const info = getDeckSlotStatus(deckKey, idx);
+  if (info.status !== "purchasable") return false;
+  const price = info.price || 0;
+  if (state.gold < price){
+    toast("Not enough gold", `Need ${fmt(price)} gold to unlock this slot.`);
+    return false;
+  }
+  state.gold -= price;
+  state.deckSlotPurchases[deckKey][idx] = true;
+  saveState(state);
+  syncUI();
+
+  // Purchase SFX (dedicated)
+  playPurchaseSFX();
+  toast("Slot Unlocked", `Unlocked Deck ${deckKey} Slot ${idx+1}.`);
+  return true;
+}
+
+function clamp(n,min,max){ return Math.max(min, Math.min(max,n)); }
+
+function mmss(ms){
+  const s = Math.max(0, Math.floor(ms/1000));
+  const m = String(Math.floor(s/60)).padStart(2,"0");
+  const r = String(s%60).padStart(2,"0");
+  return `${m}:${r}`;
+}
+function toast(title, msg){
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.innerHTML = `<b>${title}</b><div class="tSmall">${msg}</div>`;
+  toasts.appendChild(el);
+  setTimeout(()=>{ el.style.opacity="0"; el.style.transform="translateY(6px)"; }, 2600);
+  setTimeout(()=>{ el.remove(); }, 3100);
+}
+
+function showGoldPop(amount, anchorEl){
+  // amount: number, will show +X gold popup
+  try{
+    const pop = document.createElement("div");
+    pop.className = "goldPop";
+    pop.textContent = `+${fmt(Math.floor(amount))} gold`;
+
+    // Default anchor near Towers; fallback top-center
+    let x = window.innerWidth/2;
+    let y = 120;
+    if (anchorEl && anchorEl.getBoundingClientRect){
+      const r = anchorEl.getBoundingClientRect();
+      x = r.left + r.width/2;
+      y = r.top + r.height/2;
+    }
+
+    pop.style.left = `${x}px`;
+    pop.style.top = `${y}px`;
+    document.body.appendChild(pop);
+
+    // trigger animation
+    requestAnimationFrame(()=> pop.classList.add("show"));
+    setTimeout(()=>{ pop.classList.remove("show"); pop.classList.add("hide"); }, 700);
+    setTimeout(()=>{ pop.remove(); }, 1200);
+  }catch(_){}
+}
+
+
+/* ================= LocalStorage ================= */
+function defaultState(){
+  return {
+    gold: 20000,
+    invCounts: { common:0, rare:0, epic:0, mythical:0, legendary:0, cosmic:0, interstellar:0 },
+    cardsOwned: [], // [{name,img}]
+  cardsInDeck: [], // cards currently placed in decks (not shown in inventory)
+    petsOwned: [], // [{id,name,img,price,boughtAt}]
+    petShopRestockAt: Date.now() + 5*60*1000,
+    summoners: {
+      selectedId: "3dm4rk",
+      owned: ["3dm4rk"],
+      levels: {"3dm4rk": 1},
+      nextBonusAt: Date.now() + 15000,
+      nextZenoAt: Date.now() + 60000
+    },
+    towers: { stored: 0, lastTs: Date.now() },
+    decks: {
+      A: Array(9).fill(null),
+      B: Array(9).fill(null)
+    },
+    deckSlotPurchases: {
+      A: [true,true,true,false,false,false,false,false,false],
+      B: [false,false,false,false,false,false,false,false,false]
+    }
+    ,
+    weather: {
+      currentKey: "normal",
+      active: false,
+      endsAt: 0,
+      nextEventAt: Date.now() + WEATHER_EVENT_INTERVAL_MS,
+      nextStrikeAt: 0,
+      strikesDone: 0,
+      // After a special weather ends, show a "Next weather" hint every 1 minute
+      nextAnnounceAt: 0,
+      nextPreviewKey: null
+    },
+
+    // Notifications (missions + lucky draw tickets)
+    // IMPORTANT: claimed missions must persist across refreshes
+    notifications: {
+      tickets: 0,
+      claimed: {}
+    }
+
+  };
+}
+function loadState(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return defaultState();
+    const parsed = JSON.parse(raw);
+    const s = defaultState();
+    // merge
+    s.gold = Number.isFinite(parsed.gold) ? parsed.gold : s.gold;
+    s.invCounts = {...s.invCounts, ...(parsed.invCounts||{})};
+    s.cardsOwned = Array.isArray(parsed.cardsOwned) ? parsed.cardsOwned : [];
+  s.cardsInDeck = Array.isArray(parsed.cardsInDeck) ? parsed.cardsInDeck : [];
+
+    // Notifications (missions claimed + lucky draw tickets) must persist across refreshes
+    if (parsed.notifications && typeof parsed.notifications === "object"){
+      const pn = parsed.notifications;
+      const pt = Number(pn.tickets);
+      const pc = (pn.claimed && typeof pn.claimed === "object") ? pn.claimed : {};
+      s.notifications = {
+        tickets: Number.isFinite(pt) ? pt : (s.notifications?.tickets||0),
+        claimed: pc
+      };
+    }
+    s.petsOwned = Array.isArray(parsed.petsOwned) ? parsed.petsOwned : [];
+    s.petShopRestockAt = Number.isFinite(parsed.petShopRestockAt) ? parsed.petShopRestockAt : (Date.now() + 5*60*1000);
+    const ps = parsed.summoners || {};
+    s.summoners = {
+      selectedId: typeof ps.selectedId === "string" ? ps.selectedId : s.summoners.selectedId,
+      owned: Array.isArray(ps.owned) ? ps.owned : s.summoners.owned,
+      levels: (ps.levels && typeof ps.levels === "object") ? ps.levels : s.summoners.levels
+    };
+    s.towers = (parsed.towers && typeof parsed.towers==="object") ? { stored: Number(parsed.towers.stored)||0, lastTs: Date.now() } : s.towers;
+    
+
+// decks
+if (parsed.decks && typeof parsed.decks === "object"){
+  if (Array.isArray(parsed.decks.A)) s.decks.A = parsed.decks.A;
+  if (Array.isArray(parsed.decks.B)) s.decks.B = parsed.decks.B;
+}
+
+// deck slot purchases (persist unlocks so you only pay once)
+if (parsed.deckSlotPurchases && typeof parsed.deckSlotPurchases === "object"){
+  const a = Array.isArray(parsed.deckSlotPurchases.A) ? parsed.deckSlotPurchases.A : [];
+  const b = Array.isArray(parsed.deckSlotPurchases.B) ? parsed.deckSlotPurchases.B : [];
+  s.deckSlotPurchases = {
+    A: Array(9).fill(false).map((_,i)=> !!a[i]),
+    B: Array(9).fill(false).map((_,i)=> !!b[i])
+  };
+}
+
+// Normalize purchases for safety (keeps slot unlocks permanent)
+try{
+  if (!s.deckSlotPurchases || typeof s.deckSlotPurchases !== "object"){
+    s.deckSlotPurchases = { A: Array(9).fill(false), B: Array(9).fill(false) };
+  }
+  if (!Array.isArray(s.deckSlotPurchases.A)) s.deckSlotPurchases.A = Array(9).fill(false);
+  if (!Array.isArray(s.deckSlotPurchases.B)) s.deckSlotPurchases.B = Array(9).fill(false);
+  if (s.deckSlotPurchases.A.length !== 9) s.deckSlotPurchases.A = Array(9).fill(false).map((_,i)=>!!s.deckSlotPurchases.A[i]);
+  if (s.deckSlotPurchases.B.length !== 9) s.deckSlotPurchases.B = Array(9).fill(false).map((_,i)=>!!s.deckSlotPurchases.B[i]);
+  // Deck A slots 1-3 are always free/unlocked
+  for (let i=0;i<3;i++) s.deckSlotPurchases.A[i] = true;
+    // Deck B slots are NEVER free in this ruleset. No auto-unlock here.
+
+}catch(_){}
+
+	// notifications (persist mission claims + lucky draw tickets)
+	try{
+	  const pn = parsed.notifications || {};
+	  const claimed = (pn.claimed && typeof pn.claimed === "object") ? pn.claimed : {};
+	  s.notifications = {
+	    tickets: Number(pn.tickets)||0,
+	    claimed: { ...claimed }
+	  };
+	}catch(_){
+	  // fall back to defaults
+	  s.notifications = s.notifications || { tickets: 0, claimed: {} };
+	}
+
+return s;
+  }catch{
+    return defaultState();
+  }
+}
+function saveState(){
+  localStorage.setItem(LS_KEY, JSON.stringify(state));
+}
+window.resetGotcha = function(){
+  localStorage.removeItem(LS_KEY);
+  state = defaultState();
+  syncUI();
+  toast("Reset", "LocalStorage cleared.");
+};
+
+/* ================= Card Gold/sec + Mutation helpers ================= */
+function rollMutation(){
+  const r = Math.random();
+  let acc = 0;
+  for (const m of MUTATIONS){
+    acc += m.chance;
+    if (r <= acc) return m;
+  }
+  return MUTATIONS[0];
+}
+
+function computeBaseGpsFromPullChance(pullChancePct){
+  const pc = Math.max(0, Number(pullChancePct) || 0);
+  // Base: pull chance itself
+  let base = pc;
+
+  // x100 only for 1%–10% pull chance
+  if (pc >= 1 && pc <= 10) base *= 100;
+
+  return base;
+}
+
+
+function normMutKey(k){
+  return String(k||"").trim().toLowerCase();
+}
+function titleMutKey(k){
+  const s = String(k||"").trim();
+  if (!s) return "Normal";
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function getMutationList(card){
+  if (!card || typeof card !== "object") return [];
+  let list = Array.isArray(card.mutations) ? card.mutations.slice() : [];
+
+  // Back-compat: older saves used card.mutation = {k,mult}
+  const legacy = card?.mutation?.k;
+  if (legacy && normMutKey(legacy) !== "normal"){
+    list.push(titleMutKey(legacy));
+  }
+
+  // Normalize + de-dupe
+  const seen = new Set();
+  const out = [];
+  for (const raw of list){
+    const nk = normMutKey(raw);
+    if (!nk || nk === "normal") continue;
+    if (seen.has(nk)) continue;
+    seen.add(nk);
+    out.push(titleMutKey(raw));
+  }
+  return out;
+}
+function getTotalMutationMult(card){
+  const muts = getMutationList(card);
+  let mult = 1.0;
+  for (const m of muts){
+    const k = normMutKey(m);
+    mult *= (Number(MUTATION_MULTS[k]) || 1.0);
+  }
+  return mult;
+}
+function mutationLabel(card){
+  const muts = getMutationList(card);
+  return muts.length ? muts.join(" + ") : "Normal";
+}
+function primaryGlowKey(card){
+  // Pick ONE mutation for the premium edge glow (strongest first)
+  const muts = getMutationList(card).map(normMutKey);
+  const priority = ["heavenly","godly","blackhole","thunder","galactic","neon","rainbow","diamond","gold","silver"];
+  for (const p of priority){
+    if (muts.includes(p)) return p;
+  }
+  return "normal";
+}
+function recomputeCardStats(card){
+  if (!card || typeof card !== "object") return card;
+  if (!Number.isFinite(card.baseGps)) card.baseGps = Number(CARD_GPS[card.name]) || 0;
+
+  const mult = getTotalMutationMult(card);
+  card.gps = Math.round((Number(card.baseGps) || 0) * mult);
+
+  // Keep legacy field in sync so older UI code stays safe
+  card.mutation = { k: titleMutKey(primaryGlowKey(card)), mult };
+  return card;
+}
+
+function computeCardGps(card){
+  if (!card || !card.name) return 0;
+  if (!Number.isFinite(card.baseGps)) card.baseGps = Number(CARD_GPS[card.name]) || 0;
+  return Math.round((Number(card.baseGps) || 0) * getTotalMutationMult(card));
+}
+
+/* ================= Mutation glow helpers ================= */
+function applyMutationGlow(el, card){
+  if (!el || !card) return;
+
+  const mk = primaryGlowKey(card);
+  if (mk === "normal") return;
+
+  el.classList.add("mutGlow", `mut-${mk}`);
+
+  // Intensity differences by mutation (strong but not annoying)
+  if (mk === "silver") el.style.setProperty("--mut-glow", "0.55");
+  else if (mk === "gold") el.style.setProperty("--mut-glow", "0.70");
+  else if (mk === "diamond") el.style.setProperty("--mut-glow", "0.78");
+  else if (mk === "rainbow") el.style.setProperty("--mut-glow", "0.90");
+  else if (mk === "neon") el.style.setProperty("--mut-glow", "0.98");
+  else if (mk === "galactic") el.style.setProperty("--mut-glow", "1.10");
+  else if (mk === "thunder") el.style.setProperty("--mut-glow", "0.98");
+  else if (mk === "blackhole") el.style.setProperty("--mut-glow", "1.05");
+  else if (mk === "godly") el.style.setProperty("--mut-glow", "1.10");
+  else el.style.setProperty("--mut-glow", "1.18"); // heavenly
+}
+
+
+function findRarityByName(name){
+  const n = String(name||"").toLowerCase();
+  for (const [rar, pool] of Object.entries(CARD_REWARDS)){
+    for (const c of pool){
+      if (String(c.name).toLowerCase() === n) return rar;
+    }
+  }
+  return "common";
+}
+
+
+function migrateCards(){
+  // Ensure every card has: id, rarity, pullChance, mutations[], baseGps, gps, location, fav
+  if (!Array.isArray(state.cardsOwned)) state.cardsOwned = [];
+  state.cardsOwned = state.cardsOwned.map(c=>{
+    const cc = (c && typeof c === "object") ? {...c} : { name:"Unknown", img:"card.png", w:1 };
+
+    if (!cc.id) cc.id = uid();
+    if (!cc.rarity) cc.rarity = findRarityByName(cc.name);
+
+    // Standardize pullChance field (use w if missing)
+    if (!Number.isFinite(cc.pullChance)) cc.pullChance = Number(cc.w) || 0;
+
+    // Normalize + migrate mutations (stackable)
+    const muts = getMutationList(cc); // handles legacy cc.mutation too
+    cc.mutations = muts;
+
+    // Base gps is stable per card name (from your fixed table)
+    cc.baseGps = Number(CARD_GPS[cc.name]) || Number(cc.baseGps) || 0;
+
+    if (!cc.location) cc.location = "inventory";
+    if (typeof cc.fav !== "boolean") cc.fav = false;
+
+    recomputeCardStats(cc);
+    return cc;
+  });
+}
+
+
+function ensureTowers(){
+  if (!state.towers || typeof state.towers !== "object"){
+    state.towers = { stored: 0, lastTs: Date.now() };
+  }
+  if (!Number.isFinite(state.towers.stored)) state.towers.stored = 0;
+  state.towers.lastTs = Date.now();
+}
+function ensureDecks(){
+  if (!state.decks || typeof state.decks !== "object") state.decks = {A:Array(9).fill(null), B:Array(9).fill(null)};
+  if (!Array.isArray(state.decks.A)) state.decks.A = Array(9).fill(null);
+  if (!Array.isArray(state.decks.B)) state.decks.B = Array(9).fill(null);
+  // Ensure correct length
+  if (state.decks.A.length !== 9) state.decks.A = Array(9).fill(null).map((_,i)=>state.decks.A[i] ?? null);
+  if (state.decks.B.length !== 9) state.decks.B = Array(9).fill(null).map((_,i)=>state.decks.B[i] ?? null);
+}
+
+
+function ensureWeather(){
+  if (!state.weather || typeof state.weather !== "object"){
+    state.weather = {
+      currentKey: "normal",
+      active: false,
+      endsAt: 0,
+      nextEventAt: Date.now() + WEATHER_EVENT_INTERVAL_MS,
+      nextStrikeAt: 0,
+      strikesDone: 0,
+      nextAnnounceAt: 0,
+      nextPreviewKey: null
+    };
+  }
+
+  // Sanitize types
+  if (typeof state.weather.currentKey !== "string") state.weather.currentKey = "normal";
+  if (!Number.isFinite(state.weather.nextEventAt)) state.weather.nextEventAt = Date.now() + WEATHER_EVENT_INTERVAL_MS;
+  if (!Number.isFinite(state.weather.endsAt)) state.weather.endsAt = 0;
+  if (typeof state.weather.active !== "boolean") state.weather.active = false;
+  if (!Number.isFinite(state.weather.nextStrikeAt)) state.weather.nextStrikeAt = 0;
+  if (!Number.isFinite(state.weather.strikesDone)) state.weather.strikesDone = 0;
+  if (!Number.isFinite(state.weather.nextAnnounceAt)) state.weather.nextAnnounceAt = 0;
+  if (state.weather.nextPreviewKey && typeof state.weather.nextPreviewKey !== "string") state.weather.nextPreviewKey = null;
+}
+
+function ensureNotifications(){
+  if (!state.notifications || typeof state.notifications !== "object"){
+    state.notifications = { tickets: 0, claimed: {} };
+  }
+  if (!Number.isFinite(state.notifications.tickets)) state.notifications.tickets = 0;
+  if (!state.notifications.claimed || typeof state.notifications.claimed !== "object"){
+    state.notifications.claimed = {};
+  }
+}
+
+
+/* ================= Deck helpers ================= */
+function getUsedDeckCardIdSet(exceptId=null){
+  const used = new Set();
+  const add = (id)=>{ if (id && id !== exceptId) used.add(id); };
+  if (state.decks && Array.isArray(state.decks.A)) state.decks.A.forEach(add);
+  if (state.decks && Array.isArray(state.decks.B)) state.decks.B.forEach(add);
+  return used;
+}
+function getUnassignedCards(){
+  ensureDeckCardLocations();
+  return getInventoryCards();
+}
+
+function getCardById(id){
+  return (Array.isArray(state.cardsOwned) ? state.cardsOwned : []).find(c=>c && c.id===id) || null;
+}
+
+function getInventoryCards(){
+  migrateCards();
+  return (Array.isArray(state.cardsOwned) ? state.cardsOwned : []).filter(c=>c && (c.location||"inventory")==="inventory");
+}
+
+function moveCardToInventory(cardId){
+  const c = getCardById(cardId);
+  if (!c) return false;
+  c.location = "inventory";
+  return true;
+}
+
+function moveCardToDeck(cardId, deckKey, idx){
+  const c = getCardById(cardId);
+  if (!c) return false;
+  c.location = `deck:${deckKey}:${idx}`;
+  return true;
+}
+
+function ensureDeckCardLocations(){
+  ensureDecks();
+  migrateCards();
+
+  const byId = new Map((state.cardsOwned||[]).map(c=>[c.id, c]));
+  // default everything to inventory unless explicitly in a deck slot
+  (state.cardsOwned||[]).forEach(c=>{
+    if (!c.location || typeof c.location !== "string") c.location = "inventory";
+    if (c.location.startsWith("deck:")) c.location = "inventory";
+  });
+
+  const seen = new Set();
+  for (const deckKey of ["A","B"]){
+    for (let idx=0; idx<9; idx++){
+      const id = state.decks?.[deckKey]?.[idx] || null;
+      if (!id) continue;
+      const card = byId.get(id);
+      if (!card){
+        state.decks[deckKey][idx] = null;
+        continue;
+      }
+      if (seen.has(id)){
+        state.decks[deckKey][idx] = null;
+        continue;
+      }
+      seen.add(id);
+      card.location = `deck:${deckKey}:${idx}`;
+    }
+  }
+
+  (state.cardsOwned||[]).forEach(c=>{
+    if (!c.location || !c.location.startsWith("deck:")) return;
+    const parts = c.location.split(":"); // deck:A:0
+    if (parts.length !== 3){ c.location = "inventory"; return; }
+    const dk = parts[1];
+    const i = Number(parts[2]);
+    if (!state.decks?.[dk] || state.decks[dk][i] !== c.id) c.location = "inventory";
+  });
+}
+
+
+function removeCardEverywhere(cardId){
+  if (!cardId) return false;
+
+  // Remove from any deck slot references (safety)
+  ensureDecks();
+  state.decks.A = (state.decks.A||[]).map(id => id === cardId ? null : id);
+  state.decks.B = (state.decks.B||[]).map(id => id === cardId ? null : id);
+
+  // Remove from collection (location system keeps deck cards inside cardsOwned)
+  state.cardsOwned = (state.cardsOwned||[]).filter(c => c && c.id !== cardId);
+
+  // Legacy container safety (if present in old saves)
+  if (Array.isArray(state.cardsInDeck)){
+    state.cardsInDeck = state.cardsInDeck.filter(c => c && c.id !== cardId);
+  }
+  return true;
+}
+
+
+function computeDeckGps(){
+  let total = 0;
+
+  const progTier = getProgressionTier();
+
+  const addFromDeck = (deckKey)=>{
+    const deckArr = state.decks?.[deckKey] || [];
+    for (let idx=0; idx<deckArr.length; idx++){
+      const id = deckArr[idx];
+      if (!id) continue;
+
+      // Deck B hard-locked until Aegis is owned
+      if (deckKey === "B" && progTier < 4) continue;
+
+      // Slot must be purchased/unlocked to count
+      const purchased = !!state.deckSlotPurchases?.[deckKey]?.[idx];
+      if (!purchased) continue;
+
+      const c = getCardById(id);
+      if (c) total += Number(c.gps)||0;
+    }
+  };
+
+  addFromDeck("A");
+  addFromDeck("B");
+  return total;
+}
+
+
+
+/* ================= Deck Card Actions (right panel) ================= */
+const dca = document.getElementById("deckCardActions");
+const dcaTitle = document.getElementById("dcaTitle");
+const dcaMeta = document.getElementById("dcaMeta");
+const dcaClose = document.getElementById("dcaClose");
+const dcaKeep = document.getElementById("dcaKeep");
+const dcaSell = document.getElementById("dcaSell");
+
+let dcaCtx = null; // {deckKey, idx, cardId}
+
+function closeDeckCardActions(){
+  if (!dca) return;
+  dca.classList.add("hidden");
+  dca.setAttribute("aria-hidden","true");
+  dcaCtx = null;
+}
+
+function computeSellGold(card){
+  // Sell gold = base value * total multiplier
+  const gps = Number(card?.gps) || 0;
+  const mult = Number(getTotalMutationMult(card)) || 1;
+  const base = Math.max(1, Math.round(gps / mult));
+  return Math.max(1, Math.round(base * mult));
+}
+/* ================= Deck Card Inline Overlay (on-card details + actions) ================= */
+// Replaces the old right-side actions panel UX: clicking a deck card toggles an on-card overlay.
+let deckInlineCtx = null; // { deckKey, idx }
+
+function isDeckInlineSelected(deckKey, idx){
+  return !!deckInlineCtx && deckInlineCtx.deckKey === deckKey && deckInlineCtx.idx === idx;
+}
+function setDeckInlineSelected(deckKey, idx){
+  deckInlineCtx = { deckKey, idx };
+  // Keep legacy panel closed (if still present in DOM)
+  try{ closeDeckCardActions(); }catch(_){}
+}
+function clearDeckInlineSelected(){
+  deckInlineCtx = null;
+  try{ closeDeckCardActions(); }catch(_){}
+}
+
+document.addEventListener("keydown", (e)=>{
+  if (e.key === "Escape" && deckInlineCtx){
+    clearDeckInlineSelected();
+    buildSlots();
+  }
+});
+function openDeckCardActions(deckKey, idx, card){
+  if (!dca || !card) return;
+  dcaCtx = { deckKey, idx, cardId: card.id };
+
+  if (dcaTitle) dcaTitle.textContent = card.name || "Card";
+  const rarity = (card.rarity || "common").toUpperCase();
+  const mut = mutationLabel(card);
+  const gps = Number(card.gps)||0;
+  const sellGold = computeSellGold(card);
+
+  if (dcaMeta){
+    dcaMeta.innerHTML = `
+      <div><b>Rarity:</b> ${escapeHtml(rarity)}</div>
+      <div><b>Mutation:</b> ${escapeHtml(mut)}</div>
+      <div><b>Gold/sec:</b> ${gps}</div>
+      <div style="opacity:.85;margin-top:8px"><b>Sell value:</b> ${sellGold} gold</div>
+    `;
+  }
+
+  dca.classList.remove("hidden");
+  dca.setAttribute("aria-hidden","false");
+}
+
+if (dcaClose) dcaClose.addEventListener("click", closeDeckCardActions);
+document.addEventListener("keydown", (e)=>{ if(e.key==="Escape") closeDeckCardActions(); });
+
+if (dcaKeep) dcaKeep.addEventListener("click", ()=>{
+  if (!dcaCtx) return;
+  const id = state.decks[dcaCtx.deckKey][dcaCtx.idx];
+  state.decks[dcaCtx.deckKey][dcaCtx.idx] = null;
+  moveCardToInventory(id);
+  saveState();
+  buildSlots();
+  syncUI();
+  closeDeckCardActions();
+});
+
+if (dcaSell) dcaSell.addEventListener("click", ()=>{
+  if (!dcaCtx) return;
+  const card = getCardById(dcaCtx.cardId);
+  if (!card) { closeDeckCardActions(); return; }
+
+  const sellGold = computeSellGold(card);
+  state.gold += sellGold;
+
+  // Remove from decks (both)
+  state.decks.A = state.decks.A.map(id => id === card.id ? null : id);
+  state.decks.B = state.decks.B.map(id => id === card.id ? null : id);
+
+  // Remove from collection
+  state.cardsOwned = state.cardsOwned.filter(c => c.id !== card.id);
+
+  saveState();
+  buildSlots();
+  renderCardsModal();
+  syncUI();
+  closeDeckCardActions();
+});
+
+function updateTowersUI(){
+  const tier = getSummonerTier();
+  const mult = towerMultiplierForTier(tier);
+  const cap = towerCapForTier(tier);
+
+  const baseRate = computeDeckGps();
+  const rate = Math.round(baseRate * mult);
+
+  const rateEl = document.getElementById("towersRate");
+  if (rateEl) rateEl.textContent = String(rate);
+
+  const stored = Math.floor(state.towers?.stored || 0);
+  const storedEl = document.getElementById("towersStored");
+  if (storedEl) storedEl.textContent = String(stored);
+
+  const capEl = document.getElementById("towersCap");
+  if (capEl) capEl.textContent = String(cap);
+
+  const multEl = document.getElementById("towersMult");
+  if (multEl) multEl.textContent = `${mult.toFixed(1)}x`;
+}
+
+
+/* ================= Tooltip helpers ================= */
+const tooltipEl = document.getElementById("cardTooltip");
+let tooltipPinned = false;
+
+// Touch devices don't have hover. We'll use a fast long-press (hold) to reveal hover info on mobile only.
+
+function positionTooltip(x, y){
+  if (!tooltipEl) return;
+  const pad = 14;
+  const maxX = window.innerWidth - tooltipEl.offsetWidth - pad;
+  const maxY = window.innerHeight - tooltipEl.offsetHeight - pad;
+  const left = Math.max(pad, Math.min(x + 16, maxX));
+  const top  = Math.max(pad, Math.min(y + 16, maxY));
+  tooltipEl.style.left = left + "px";
+  tooltipEl.style.top = top + "px";
+}
+
+function hideTooltip(){
+  hideCardTooltip();
+}
+
+// Bind a mobile-only long-press gesture to show the same info that appears on hover.
+// - Responsive: triggers around ~280ms
+// - Intuitive: shows while holding; disappears on release/cancel
+function bindLongPressHold(el, onShow, onHide){
+  if (!el) return;
+  if (!IS_HOVERLESS_TOUCH) return;
+
+  let lpTimer = null;
+  let startX = 0, startY = 0;
+  let active = false;
+  let triggered = false;
+
+  const clear = () => {
+    active = false;
+    if (lpTimer){ clearTimeout(lpTimer); lpTimer = null; }
+  };
+
+  el.addEventListener("pointerdown", (e)=>{
+    if (e.pointerType !== "touch") return;
+    clear();
+    active = true;
+    triggered = false;
+    startX = e.clientX; startY = e.clientY;
+
+    lpTimer = setTimeout(()=>{
+      if (!active) return;
+      triggered = true;
+      try { onShow && onShow(e); } catch(_){}
+      try { e.preventDefault(); } catch(_){}
+      try { e.stopPropagation(); } catch(_){}
+    }, 240);
+  }, { passive:false });
+
+  el.addEventListener("pointermove", (e)=>{
+    if (!active) return;
+    const dx = Math.abs(e.clientX - startX);
+    const dy = Math.abs(e.clientY - startY);
+    if (dx > 10 || dy > 10){
+      clear();
+      if (triggered){ try{ onHide && onHide(e);}catch(_){} }
+    }
+  }, { passive:true });
+
+  const end = (e) => {
+    const wasTriggered = triggered;
+    clear();
+    if (wasTriggered){
+      try { onHide && onHide(e);} catch(_){}
+    }
+  };
+  el.addEventListener("pointerup", end, { passive:true });
+  el.addEventListener("pointercancel", end, { passive:true });
+}
+
+function bindLongPressTooltip(el, getHtml){
+  if (!el) return;
+  if (!IS_HOVERLESS_TOUCH) return;
+
+  let lpTimer = null;
+  let startX = 0, startY = 0;
+  let active = false;
+  let triggered = false;
+
+  const clear = () => {
+    active = false;
+    if (lpTimer){ clearTimeout(lpTimer); lpTimer = null; }
+  };
+
+  el.addEventListener("pointerdown", (e)=>{
+    if (e.pointerType !== "touch") return;
+    clear();
+    active = true;
+    triggered = false;
+    startX = e.clientX; startY = e.clientY;
+
+    // Fast long-press (feels snappy, avoids accidental triggers while scrolling)
+    lpTimer = setTimeout(()=>{
+      if (!active) return;
+      triggered = true;
+      tooltipPinned = true;
+
+      const html = (typeof getHtml === "function") ? getHtml() : "";
+      showTooltipHtml(html, e.clientX, e.clientY);
+
+      // Prevent browser callout/context menu and avoid "ghost click"
+      try { e.preventDefault(); } catch(_){}
+      try { e.stopPropagation(); } catch(_){}
+    }, 280);
+  }, { passive:false });
+
+  el.addEventListener("pointermove", (e)=>{
+    if (!active) return;
+    const dx = Math.abs(e.clientX - startX);
+    const dy = Math.abs(e.clientY - startY);
+    // If user is scrolling, cancel the long-press.
+    if (dx > 10 || dy > 10){
+      clear();
+      return;
+    }
+    if (triggered){
+      positionTooltip(e.clientX, e.clientY);
+    }
+  }, { passive:true });
+
+  const end = () => {
+    const wasTriggered = triggered;
+    clear();
+    if (wasTriggered){
+      tooltipPinned = false;
+      hideTooltip();
+    }
+  };
+  el.addEventListener("pointerup", end, { passive:true });
+  el.addEventListener("pointercancel", end, { passive:true });
+}
+
+function formatCardDetails(card){
+  if (!card) return "";
+  const name = escapeHtml(card.name || "Unknown");
+  const rarity = escapeHtml((card.rarity || "common").toUpperCase());
+  const mutation = escapeHtml(mutationLabel(card));
+  const gps = Number(card.gps) || 0;
+  return `
+    <div class="ttName">${name}</div>
+    <div class="ttRow"><span class="ttBadge">${rarity}</span><span class="ttBadge">${mutation}</span></div>
+    <div class="ttRow">Gold/sec: <b>${gps}</b></div>
+  `;
+}
+
+function showTooltipHtml(html, x, y){
+  if (!tooltipEl) return;
+  tooltipEl.innerHTML = html || "";
+  const pad = 14;
+  const maxX = window.innerWidth - tooltipEl.offsetWidth - pad;
+  const maxY = window.innerHeight - tooltipEl.offsetHeight - pad;
+  const left = Math.max(pad, Math.min(x + 16, maxX));
+  const top  = Math.max(pad, Math.min(y + 16, maxY));
+  tooltipEl.style.left = left + "px";
+  tooltipEl.style.top = top + "px";
+  tooltipEl.classList.add("show");
+  tooltipEl.setAttribute("aria-hidden","false");
+}
+
+function showCardTooltip(card, x, y){
+  showTooltipHtml(formatCardDetails(card), x, y);
+}
+
+function formatSummonerTooltip(){
+  const tier = getSummonerTier();
+  const activeId = getActiveSummonerId();
+  const s = getSummonerDef(activeId);
+
+  const mult = towerMultiplierForTier(tier);
+  const cap = towerCapForTier(tier);
+  const petLimit = petLimitForTier(tier);
+  const bonus15 = bonusGoldPer15sForTier(tier);
+
+  const lines = [];
+  lines.push(bonus15 > 0 ? `+${fmt(bonus15)} gold / 15s` : "No bonus gold");
+  lines.push(`Pets: ${petLimit}`);
+  lines.push(`Tower: ${mult.toFixed(1)}x • Cap ${fmt(cap)}`);
+  lines.push(`Deck: ${activeId==="3dm4rk" ? "Only Deck A slots 1–3" : "Tier-based slots + Deck B"}`);
+
+  return `
+    <div class="ttName">${escapeHtml(s.name || "Summoner")}</div>
+    <div class="ttRow"><span class="ttBadge">SUMMONER</span><span class="ttBadge">Tier ${tier}</span></div>
+    <div class="ttRow">${escapeHtml(lines.join(" • "))}</div>
+    <div class="ttRow" style="opacity:.82">${escapeHtml(s.desc || "")}</div>
+  `;
+}
+
+function bindSummonerTooltip(el){
+  if (!el) return;
+  el.addEventListener("mouseenter", (e)=> showTooltipHtml(formatSummonerTooltip(), e.clientX, e.clientY));
+  el.addEventListener("mousemove", (e)=> showTooltipHtml(formatSummonerTooltip(), e.clientX, e.clientY));
+  el.addEventListener("mouseleave", hideCardTooltip);
+  bindLongPressTooltip(el, ()=>formatSummonerTooltip());
+}
+
+function hideCardTooltip(){
+  if (!tooltipEl) return;
+  tooltipEl.classList.remove("show");
+  tooltipEl.setAttribute("aria-hidden","true");
+}
+
+function bindTooltip(el, getCard){
+  if (!el) return;
+  el.addEventListener("mouseenter", (e)=>{
+    const c = getCard();
+    if (!c) return;
+    showCardTooltip(c, e.clientX, e.clientY);
+  });
+  el.addEventListener("mousemove", (e)=>{
+    const c = getCard();
+    if (!c) return;
+    showCardTooltip(c, e.clientX, e.clientY);
+  });
+  el.addEventListener("mouseleave", ()=>{
+    hideCardTooltip();
+  });
+
+  bindLongPressTooltip(el, ()=>{
+    const c = getCard();
+    return c ? formatCardDetails(c) : "";
+  });
+}
+
+
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, (m)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m]));
+}
+
+/* ================= RNG helpers ================= */
+function pickRarity(){
+  const r = Math.random();
+  let acc = 0;
+  for (const o of RARITIES){
+    acc += o.w / totalW;
+    if (r <= acc) return o;
+  }
+  return RARITIES[0];
+}
+function newItem(){
+  const r = pickRarity();
+  return { id: uid(), rarity: r.k, price: r.price };
+}
+function pickFromWeighted(list){
+  const total = list.reduce((s,i)=>s + (i.w ?? 1), 0);
+  let r = Math.random() * total;
+  for (const item of list){
+    r -= (item.w ?? 1);
+    if (r <= 0) return item;
+  }
+  return list[0];
+}
+
+function rollCardForRarity(rarity){
+  const pool = CARD_REWARDS[rarity] || [];
+  const mut = rollMutation();
+
+  const mk = normMutKey(mut.k);
+  const muts = (mk && mk !== "normal") ? [titleMutKey(mut.k)] : [];
+
+  if (!pool.length){
+    const fallback = {
+      id: uid(),
+      rarity,
+      name:"Unknown",
+      img:"card.png",
+      pullChance: 1,
+      w:1,
+      baseGps: 0,
+      mutations: muts,
+      location: "inventory",
+      fav: false
+    };
+    recomputeCardStats(fallback);
+    return fallback;
+  }
+
+  const base = pickFromWeighted(pool);
+
+  const card = {
+    id: uid(),
+    rarity,
+    name: base.name,
+    img: base.img || "card.png",
+    // "w" is treated as pull chance percentage (matches your earlier balance logic)
+    pullChance: Number(base.w) || 0,
+    w: Number(base.w) || 0,
+    baseGps: Number(CARD_GPS[base.name]) || 0,
+    mutations: muts,
+    location: "inventory",
+    fav: false
+  };
+
+  recomputeCardStats(card);
+  return card;
+}
+
+
+/* ================= Shop Cards ================= */
+function setCardVisual(el, item){
+  el.className = `card r-${item.rarity}`;
+  el.querySelector(".price").textContent = `${fmt(item.price)} Gold`;
+}
+function updateIndexDOM(idx){
+  document.querySelectorAll(`.card[data-i="${idx}"]`).forEach(node=>{
+    setCardVisual(node, stock[idx]);
+    node.classList.remove("restock");
+    void node.offsetWidth;
+    node.classList.add("restock");
+  });
+}
+
+function createCardElement(item, baseIndex){
+  const el = document.createElement("div");
+  el.className = `card r-${item.rarity}`;
+  el.dataset.i = String(baseIndex);
+  
+  el.dataset.sfx = "purchase";
+el.innerHTML = `
+    <div class="aura"></div>
+    <div class="cardBack" aria-hidden="true"></div>
+    <div class="meta"><span>CARD</span><span class="price">${fmt(item.price)} Gold</span></div>
+  `;
+
+  el.addEventListener("click", ()=>{
+    const idx = Number(el.dataset.i);
+    const cur = stock[idx];
+    if (!cur) return;
+
+    if (state.gold < cur.price){
+      toast("Not enough gold", `Need ${fmt(cur.price)} gold.`);
+      return;
+    }
+
+    state.gold -= cur.price;
+    state.invCounts[cur.rarity] = (state.invCounts[cur.rarity] || 0) + 1;
+    saveState();
+    syncUI();
+
+    
+
+    // Purchase SFX (dedicated)
+    playPurchaseSFX();
+el.classList.add("pulse");
+    setTimeout(()=>el.classList.remove("pulse"), 240);
+    toast("Purchased!", `+1 ${cur.rarity.toUpperCase()} pack`);
+
+    stock[idx] = newItem();
+    updateIndexDOM(idx);
+  });
+
+  return el;
+}
+
+function buildMarquee(){
+  stock = Array.from({length:22}, newItem);
+  track.innerHTML = "";
+  for (let rep=0; rep<2; rep++){
+    stock.forEach((it, i)=> track.appendChild(createCardElement(it, i)));
+  }
+}
+
+/* ================= Inventory UI ================= */
+function rarityLabel(r){ return String(r).toUpperCase(); }
+function dotColor(r){ return auraVarByRarity[r] ?? "var(--common)"; }
+
+function makeInvRow(rarity, count){
+  const row = document.createElement("div");
+  row.className = "invRow";
+
+  const left = document.createElement("div");
+  left.className = "invLeft";
+
+  const dot = document.createElement("div");
+  dot.className = "dot";
+  dot.style.background = dotColor(rarity);
+  dot.style.boxShadow = `0 0 16px color-mix(in srgb, ${dotColor(rarity)} 60%, transparent)`;
+
+  const name = document.createElement("div");
+  name.className = "invName";
+  name.innerHTML = `<b>${rarityLabel(rarity)} PACK</b><small>x${fmt(count)} owned</small>`;
+
+  left.appendChild(dot);
+  left.appendChild(name);
+
+  const actions = document.createElement("div");
+  actions.className = "actions";
+
+  const btn1 = document.createElement("button");
+  btn1.className = "btn btnPrimary";
+  btn1.dataset.sfx = "open-card";
+  btn1.textContent = "Open 1x";
+  btn1.disabled = count < 1;
+  btn1.onclick = ()=> openPacks(rarity, 1);
+
+  const btn5 = document.createElement("button");
+  btn5.className = "btn";
+  btn5.dataset.sfx = "open-card";
+  btn5.textContent = "Open 5x";
+  btn5.disabled = count < 5;
+  btn5.onclick = ()=> openPacks(rarity, 5);
+
+  const btnAll = document.createElement("button");
+  btnAll.className = "btn";
+  btnAll.dataset.sfx = "open-card";
+  btnAll.textContent = "Reveal All";
+  btnAll.disabled = count < 1;
+  btnAll.onclick = ()=> openPacks(rarity, count);
+
+  actions.appendChild(btn1);
+  actions.appendChild(btn5);
+  actions.appendChild(btnAll);
+
+  row.appendChild(left);
+  row.appendChild(actions);
+  return row;
+}
+
+function updateInvBadge(){
+  const total = Object.values(state.invCounts || {}).reduce((a,n)=>a+(Number(n)||0),0);
+
+  if (invBadge){
+    invBadge.textContent = String(total);
+  }
+  if (invTotalEl){
+    invTotalEl.textContent = fmt(total);
+  }
+  if (invPacksBadge){
+    invPacksBadge.textContent = String(total);
+    invPacksBadge.style.display = total > 0 ? "inline-flex" : "none";
+  }
+
+  if (!invModalGrid || !invModalEmpty) return;
+
+  if (total === 0){
+    invModalGrid.innerHTML = "";
+    invModalEmpty.style.display = "block";
+    return;
+  }
+  invModalEmpty.style.display = "none";
+}
+
+function renderInventory(){
+  invModalGrid.innerHTML = "";
+  const total = Object.values(state.invCounts).reduce((a,n)=>a+n,0);
+  updateInvBadge();
+  if (total === 0) return;
+
+  invOrder.forEach(r=>{
+    const c = state.invCounts[r] || 0;
+    if (c > 0) invModalGrid.appendChild(makeInvRow(r, c));
+  });
+}
+
+/* ================= Rewards (CARDS ONLY) ================= */
+let opening = null; // {rarity, count}
+
+function renderRewardGrid(cards, rarity){
+  rewardGrid.innerHTML = "";
+  const n = cards.length;
+  let cols = 4;
+  if (n === 1) cols = 1;
+  else if (n <= 4) cols = 2;
+  else if (n <= 9) cols = 3;
+  rewardGrid.style.setProperty("--cols", String(Math.max(1, Math.min(cols, 5))));
+
+  cards.forEach((c, idx)=>{
+    const tile = document.createElement("div");
+    tile.className = `rewardTile r-${rarity}`;
+    tile.style.animationDelay = (idx * 0.04) + "s";
+
+    // Animated mutation glow (Silver → Rainbow only)
+    applyMutationGlow(tile, c);
+
+    const img = document.createElement("img");
+    img.loading = "eager";
+    img.decoding = "async";
+    img.alt = c?.name || "Card";
+    img.src = c?.img || "card.png";
+    img.onerror = ()=>{ img.src = "card.png"; };
+
+    tile.appendChild(img);
+
+    // Hover: show card details (name, rarity, mutation, gold/sec)
+    bindTooltip(tile, ()=>c);
+
+    rewardGrid.appendChild(tile);
+  });
+}
+
+function openPacks(rarity, count){
+  const have = state.invCounts[rarity] || 0;
+  if (have <= 0) return;
+
+  // Card opening SFX (dedicated)
+  playCardOpeningSFX();
+
+  // Close inventory so rewards is always on top (no "hidden behind" bug)
+  closeInventory();
+
+  opening = {
+    rarity,
+    countToOpen: Math.max(1, Math.min(count, have)),
+    revealed: false
+  };
+
+  rewardsOkBtn.disabled = true;
+  rewardGrid.innerHTML = "";
+  openRewards();
+
+  setTimeout(()=>doReveal(), 220);
+}
+
+function doReveal(){
+  if (!opening || opening.revealed) return;
+  opening.revealed = true;
+
+  const cards = [];
+  for (let i=0; i<opening.countToOpen; i++){
+    const card = rollCardForRarity(opening.rarity);
+    cards.push(card);
+    state.cardsOwned.push(card);
+  }
+
+  // Remove packs only (NO GOLD REWARD)
+  state.invCounts[opening.rarity] = Math.max(0, (state.invCounts[opening.rarity] || 0) - opening.countToOpen);
+
+  saveState();
+  syncUI();
+
+  renderRewardGrid(cards, opening.rarity);
+
+  setTimeout(()=>{ rewardsOkBtn.disabled = false; }, 220);
+  toast("Cards obtained", `${opening.countToOpen} pack(s) opened • Added to Cards`);
+}
+
+/* ================= Cards modal ================= */
+function updateCardsBadge(){
+  const available = getUnassignedCards();
+  cardsBadge.textContent = String(available.length);
+}
+
+function getHeartedInventoryCount(){
+  return getInventoryCards().filter(c=>c && c.fav===true).length;
+}
+
+function updateCardsModalCounts(){
+  if (cardsTotalCount) cardsTotalCount.textContent = String(getInventoryCards().length);
+  if (cardsHeartedCount) cardsHeartedCount.textContent = String(getHeartedInventoryCount());
+}
+
+function renderCardsModal(){
+  ensureDeckCardLocations();
+
+  const q = (cardsSearchInput?.value || "").trim().toLowerCase();
+
+  // Inventory view: show ONLY cards currently in inventory (cardsOwned)
+  let available = getInventoryCards();
+  if (q){
+    available = available.filter(c => String(c?.name||"").toLowerCase().includes(q));
+  }
+
+  cardsGrid.innerHTML = "";
+  updateCardsModalCounts();
+
+  if (!available.length){
+    cardsEmpty.style.display = "block";
+    return;
+  }
+  cardsEmpty.style.display = "none";
+
+  // One-time delegated handler (prevents "sometimes doesn't work" issues when the grid re-renders)
+  if (!cardsGrid._delegatedCardsModal){
+    cardsGrid._delegatedCardsModal = true;
+
+    const onActivate = (evt)=>{
+      // Heart toggle
+      const favEl = evt.target?.closest?.('[data-action="fav"]');
+      if (favEl && cardsGrid.contains(favEl)){
+        evt.preventDefault();
+        evt.stopPropagation();
+        const id = favEl.getAttribute("data-card-id");
+        const card = getCardById(id);
+        if (!card) return;
+        card.fav = !card.fav;
+        saveState();
+        renderCardsModal();
+        return;
+      }
+
+      // Sell card (click tile)
+      const tile = evt.target?.closest?.(".cardThumb");
+      if (!tile || !cardsGrid.contains(tile)) return;
+
+      const id = tile.getAttribute("data-card-id");
+      const card = getCardById(id);
+      if (!card) return;
+
+      const sellGold = computeSellGold(card);
+      const warn = card.fav ? "\n\nThis card is favorited (hearted). Selling it will remove it anyway." : "";
+      const ok = confirm(`Sell ${card?.name||"this card"} for ${sellGold} gold?${warn}`);
+      if (!ok) return;
+
+      removeCardEverywhere(card.id);
+      state.gold = (Number(state.gold)||0) + sellGold;
+      saveState();
+      syncUI();
+      renderCardsModal();
+      buildSlots();
+      updateTowersUI();
+    };
+
+    cardsGrid.addEventListener("click", onActivate);
+
+    // Keyboard support: Enter/Space triggers click for accessibility
+    cardsGrid.addEventListener("keydown", (evt)=>{
+      if (evt.key !== "Enter" && evt.key !== " ") return;
+      const t = evt.target;
+      if (!t) return;
+      evt.preventDefault();
+      t.click?.();
+    });
+  }
+
+  available.forEach(c=>{
+    const d = document.createElement("div");
+    d.className = "cardThumb";
+    d.setAttribute("role","button");
+    d.setAttribute("tabindex","0");
+    d.setAttribute("data-card-id", c.id);
+    d.title = "Click to sell this card";
+
+    applyMutationGlow(d, c);
+
+    const img = document.createElement("img");
+    img.src = c?.img || "card.png";
+    img.onerror = ()=>{ img.src = "card.png"; };
+    d.appendChild(img);
+
+    // Favorite (heart) — top right
+    const fav = document.createElement("div");
+    fav.className = "cardFavBtn" + (c.fav ? " isOn" : "");
+    fav.setAttribute("role","button");
+    fav.setAttribute("tabindex","0");
+    fav.setAttribute("data-action","fav");
+    fav.setAttribute("data-card-id", c.id);
+    fav.setAttribute("aria-label", c.fav ? "Unfavorite" : "Favorite");
+    fav.textContent = c.fav ? "❤" : "♡";
+    d.appendChild(fav);
+
+    bindTooltip(d, ()=>getCardById(c.id) || c);
+
+    cardsGrid.appendChild(d);
+  });
+}
+
+
+
+function openDeckPicker(deckKey, idx){
+  ensureDecks();
+  migrateCards();
+
+  deckPicking = { deckKey, idx, selectedCardId: null };
+
+  if (deckHint){
+    deckHint.textContent = `Choose a card for Deck ${deckKey} • Slot ${idx+1}`;
+  }
+
+  renderDeckPicker();
+  deckOverlay.classList.add("show");
+  deckOverlay.setAttribute("aria-hidden","false");
+}
+
+function closeDeckPicker(){
+  deckOverlay.classList.remove("show");
+  deckOverlay.setAttribute("aria-hidden","true");
+  deckPicking = null;
+}
+
+function renderDeckPicker(){
+  if (!deckPickGrid) return;
+
+  deckPickGrid.innerHTML = "";
+
+  if (!getInventoryCards().length){
+    deckEmpty.style.display = "block";
+    deckSelectBtn.disabled = true;
+    setDeckDetails(null);
+    return;
+  }
+
+  deckEmpty.style.display = "none";
+
+  const curId = state.decks?.[deckPicking.deckKey]?.[deckPicking.idx] || null;
+  const used = getUsedDeckCardIdSet(curId);
+  const pool = getInventoryCards().filter(c=>c && !used.has(c.id));
+
+  pool.forEach(c=>{
+    const item = document.createElement("div");
+    item.className = "deckPickItem";
+    item.dataset.id = c.id;
+
+    applyMutationGlow(item, c);
+
+    const img = document.createElement("img");
+    img.src = c.img || "card.png";
+    img.onerror = ()=>{ img.src = "card.png"; };
+
+    const meta = document.createElement("div");
+    meta.className = "deckPickMeta";
+
+    const name = document.createElement("div");
+    name.className = "deckPickName";
+    name.textContent = c.name || "Unknown";
+
+    const tag = document.createElement("div");
+    tag.className = "deckPickTag";
+    tag.textContent = (c.rarity || "common").toUpperCase();
+
+    meta.appendChild(name);
+    meta.appendChild(tag);
+
+    item.appendChild(img);
+    item.appendChild(meta);
+
+    bindTooltip(item, ()=>c);
+
+    item.addEventListener("click", ()=>{
+      document.querySelectorAll(".deckPickItem.sel").forEach(n=>n.classList.remove("sel"));
+      item.classList.add("sel");
+      deckPicking.selectedCardId = c.id;
+      deckSelectBtn.disabled = false;
+      setDeckDetails(c);
+    });
+
+    deckPickGrid.appendChild(item);
+  });
+
+  // Preselect currently assigned card if any
+  if (curId){
+    const cur = getCardById(curId);
+    if (cur){
+      setDeckDetails(cur);
+      deckPicking.selectedCardId = curId;
+      deckSelectBtn.disabled = false;
+      const el = deckPickGrid.querySelector(`.deckPickItem[data-id="${curId}"]`);
+      if (el) el.classList.add("sel");
+    }
+  }else{
+    setDeckDetails(null);
+    deckSelectBtn.disabled = true;
+  }
+}
+
+function setDeckDetails(card){
+  if (!deckDetailsImg) return;
+  if (!card){
+    deckDetailsImg.src = "card.png";
+    deckDetailsName.textContent = "—";
+    deckDetailsRarity.textContent = "—";
+    deckDetailsChance.textContent = "—";
+    deckDetailsMutation.textContent = "—";
+    deckDetailsGps.textContent = "—";
+    return;
+  }
+  deckDetailsImg.src = card.img || "card.png";
+  deckDetailsName.textContent = card.name || "Unknown";
+  deckDetailsRarity.textContent = (card.rarity || "common").toUpperCase();
+  deckDetailsChance.textContent = `${Number(card.pullChance ?? card.w ?? 0)}%`;
+  deckDetailsMutation.textContent = mutationLabel(card);
+  deckDetailsGps.textContent = `${Number(card.gps)||0} / sec`;
+}
+
+/* ================= Modals open/close ================= */
+function setInventoryTab(tab){
+  const t = (tab === "pets") ? "pets" : "packs";
+
+  if (invTabs){
+    invTabs.querySelectorAll(".invTab").forEach(btn=>{
+      btn.classList.toggle("isActive", btn.dataset.tab === t);
+    });
+  }
+  if (invPanelPacks) invPanelPacks.style.display = (t === "packs") ? "block" : "none";
+  if (invPanelPets) invPanelPets.style.display = (t === "pets") ? "block" : "none";
+
+  // Render content for the active panel
+  if (t === "packs") renderInventory();
+  else renderPets();
+
+  // keep badges up to date
+  updatePetsBadge();
+  if (invPacksBadge){
+    const total = Object.values(state.invCounts || {}).reduce((a,n)=>a+(Number(n)||0),0);
+    invPacksBadge.textContent = String(total);
+    invPacksBadge.style.display = total > 0 ? "inline-flex" : "none";
+  }
+}
+
+function openInventory(){
+  if (!invOverlay) return;
+  // Default tab
+  setInventoryTab(state.ui?.invTab || "packs");
+  invOverlay.classList.add("show");
+  invOverlay.setAttribute("aria-hidden","false");
+  setTimeout(()=> invTabs?.querySelector?.(".invTab.isActive")?.focus?.(), 0);
+}
+function closeInventory(){
+  if (!invOverlay) return;
+  // remember tab
+  const active = invTabs?.querySelector?.(".invTab.isActive");
+  const tab = active?.dataset?.tab;
+  if (tab){
+    if (!state.ui || typeof state.ui !== "object") state.ui = {};
+    state.ui.invTab = tab;
+    saveState(state);
+  }
+
+  invOverlay.classList.remove("show");
+  invOverlay.setAttribute("aria-hidden","true");
+}
+function openRewards(){
+  rewardsOverlay.classList.add("show");
+  rewardsOverlay.setAttribute("aria-hidden","false");
+}
+function closeRewards(){
+  rewardsOverlay.classList.remove("show");
+  rewardsOverlay.setAttribute("aria-hidden","true");
+  opening = null;
+}
+
+function openNotifications(){
+  notifOverlay.classList.add("show");
+  notifOverlay.setAttribute("aria-hidden","false");
+  setNotifTab("rewards");
+  renderNotifTab();
+}
+function closeNotifications(){
+  notifOverlay.classList.remove("show");
+  notifOverlay.setAttribute("aria-hidden","true");
+}
+
+function openLuckyResultModal(){
+  luckyResultOverlay.classList.add("show");
+  luckyResultOverlay.setAttribute("aria-hidden","false");
+}
+function closeLuckyResultModal(){
+  luckyResultOverlay.classList.remove("show");
+  luckyResultOverlay.setAttribute("aria-hidden","true");
+}
+
+function openCards(){
+  renderCardsModal();
+  cardsOverlay.classList.add("show");
+  cardsOverlay.setAttribute("aria-hidden","false");
+}
+function closeCards(){
+  cardsOverlay.classList.remove("show");
+  cardsOverlay.setAttribute("aria-hidden","true");
+}
+
+/* ================= Animation loop ================= */
+function loop(now){
+  const dt = Math.min(0.05, (now - lastTime)/1000);
+  lastTime = now;
+
+  x -= speed * dt;
+
+  const cardW = 210;
+  const gap = 22;
+  const step = cardW + gap;
+  const w = stock.length * step;
+
+  if (x <= -w) x += w;
+  track.style.transform = `translate3d(${x}px,-50%,0)`;
+
+  requestAnimationFrame(loop);
+}
+
+/* ================= Deck slots ================= */
+function buildSlots(){
+  const deckAEl = document.getElementById("deckA");
+  const deckBEl = document.getElementById("deckB");
+  if (!deckAEl || !deckBEl) return;
+
+  deckAEl.innerHTML = "";
+  deckBEl.innerHTML = "";
+
+  const makeSlot = (deckKey, idx)=>{
+    const s = document.createElement("div");
+    s.className = "slot";
+    s.dataset.deck = deckKey;
+    s.dataset.idx = String(idx);
+
+    const slotInfo = getDeckSlotStatus(deckKey, idx);
+
+    const assignedId = state.decks?.[deckKey]?.[idx] || null;
+    if (assignedId){
+      const c = getCardById(assignedId);
+      if (c){
+        s.classList.add("assigned");
+
+        applyMutationGlow(s, c);
+
+        const img = document.createElement("img");
+        img.src = c.img || "card.png";
+        img.onerror = ()=>{ img.src = "card.png"; };
+        const badge = document.createElement("div");
+        badge.className = "slotBadge";
+        badge.textContent = `${c.gps}/s`;
+        s.appendChild(img);
+        s.appendChild(badge);
+
+// Inline overlay (click-to-toggle) for details + actions
+if (isDeckInlineSelected(deckKey, idx)){
+  s.classList.add("selected");
+  const ov = document.createElement("div");
+  ov.className = "slotOverlay";
+  const rarity = (c.rarity || "common").toUpperCase();
+  const mut = mutationLabel(c);
+  const gps = Number(c.gps)||0;
+  const sellGold = computeSellGold(c);
+
+  ov.innerHTML = `
+    <div class="slotOverlayTop">
+      <div class="slotOverlayName">${escapeHtml(c.name || "Card")}</div>
+      <div class="slotOverlayBadges">
+        <span class="pillMini">${escapeHtml(rarity)}</span>
+        <span class="pillMini">${escapeHtml(mut)}</span>
+      </div>
+    </div>
+    <div class="slotOverlayLine">Gold/sec: <b>${gps}</b></div>
+    <div class="slotOverlayBtns">
+      <button class="slotBtn" type="button" data-act="keep">Keep</button>
+      <button class="slotBtn danger" type="button" data-act="sell">Sell • ${sellGold}g</button>
+    </div>
+  `;
+
+  // Prevent slot click toggle when clicking inside overlay
+  ov.addEventListener("click", (e)=> e.stopPropagation());
+
+  // Button actions
+  ov.querySelector('[data-act="keep"]')?.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const id = state.decks?.[deckKey]?.[idx] || null;
+    if (!id) return;
+    state.decks[deckKey][idx] = null;
+    moveCardToInventory(id);
+    saveState();
+    clearDeckInlineSelected();
+    buildSlots();
+    syncUI();
+  });
+
+  ov.querySelector('[data-act="sell"]')?.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const id = state.decks?.[deckKey]?.[idx] || null;
+    const cardNow = id ? getCardById(id) : null;
+    if (!cardNow) return;
+    const sg = computeSellGold(cardNow);
+    state.gold += sg;
+
+    // Remove from decks (both)
+    state.decks.A = state.decks.A.map(x => x === cardNow.id ? null : x);
+    state.decks.B = state.decks.B.map(x => x === cardNow.id ? null : x);
+
+    // Remove from collection
+    state.cardsOwned = (state.cardsOwned||[]).filter(cc => cc && cc.id !== cardNow.id);
+
+    saveState();
+    clearDeckInlineSelected();
+    buildSlots();
+    renderCardsModal();
+    syncUI();
+    toast("Sold!", `You gained ${fmt(sg)} gold.`);
+  });
+
+  s.appendChild(ov);
+}
+      }else{
+        s.innerHTML = '<div class="slotPlus">+</div>';
+      }
+    }else{
+      s.innerHTML = '<div class="slotPlus">+</div>';
+    }
+
+    // Hover details for assigned card
+    if (assignedId){
+      const cardForTip = getCardById(assignedId);
+      if (cardForTip) bindTooltip(s, ()=>cardForTip);
+    }
+    // Slot locking / purchasing based on Summoner tier
+    if (!assignedId){
+      if (slotInfo.status === "locked"){
+        s.classList.add("locked");
+        s.innerHTML = `<div class="slotLock">LOCKED</div>`;
+      } else if (slotInfo.status === "purchasable"){
+        s.classList.add("purchasable");
+        s.innerHTML = `<div class="slotUnlock">UNLOCK<br><span>${fmt(slotInfo.price)}g</span></div>`;
+      }
+    }
+
+    s.addEventListener("click", ()=>{
+      if (s.classList.contains("locked")) return;
+      if (s.classList.contains("purchasable")){ clearDeckInlineSelected(); purchaseDeckSlot(deckKey, idx); return; }
+
+const currentId = state.decks?.[deckKey]?.[idx] || null;
+if (currentId){
+  // Toggle on-card overlay instead of opening a modal/panel
+  if (isDeckInlineSelected(deckKey, idx)){
+    clearDeckInlineSelected();
+  }else{
+    setDeckInlineSelected(deckKey, idx);
+  }
+  buildSlots();
+  return;
+}
+clearDeckInlineSelected();
+openDeckPicker(deckKey, idx);
+    });
+return s;
+  };
+
+  for(let i=0;i<9;i++) deckAEl.appendChild(makeSlot("A", i));
+  for(let i=0;i<9;i++) deckBEl.appendChild(makeSlot("B", i));
+}
+
+
+/* ================= UI Sync ================= */
+
+function syncSummonerHeroUI(){
+  const activeId = getActiveSummonerId();
+  const s = getSummonerDef(activeId);
+  if(heroImg && s){
+    const src = s.heroImg || s.img || "card.png";
+    heroImg.src = src;
+    heroImg.alt = s.name || "Summoner";
+    heroImg.style.display = "";
+  }
+}
+
+function syncUI(){
+  updateGoldUI();
+  renderInventory();
+  updateCardsBadge();  updatePetsBadge();
+  updateTowersUI();
+  buildSlots();
+  syncSummonerHeroUI();
+  updateWeatherUI();
+  updateNotificationsBadges();
+}
+
+/* ================= Notifications System ================= */
+
+const NOTIF_MISSIONS = [
+  { id:"m_rarest_common", label:()=>`Get the rarest Common card`, reward:2, done:()=>ownsRarestCardOfRarity("common") },
+  { id:"m_rarest_rare", label:()=>`Get the rarest Rare card`, reward:2, done:()=>ownsRarestCardOfRarity("rare") },
+  { id:"m_rarest_epic", label:()=>`Get the rarest Epic card`, reward:3, done:()=>ownsRarestCardOfRarity("epic") },
+  { id:"m_rarest_mythical", label:()=>`Get the rarest Mythical card`, reward:2, done:()=>ownsRarestCardOfRarity("mythical") },
+  { id:"m_rarest_legendary", label:()=>`Get the rarest Legendary card`, reward:2, done:()=>ownsRarestCardOfRarity("legendary") },
+  { id:"m_rarest_cosmic", label:()=>`Get the rarest Cosmic card`, reward:5, done:()=>ownsRarestCardOfRarity("cosmic") },
+  { id:"m_rarest_interstellar", label:()=>`Get the rarest Interstellar card`, reward:10, done:()=>ownsRarestCardOfRarity("interstellar") },
+
+  { id:"m_rainbow_1", label:()=>`Get 1 card with Rainbow mutation`, reward:2, done:()=>countCardsWithMutation("rainbow") >= 1 },
+  { id:"m_rainbow_5", label:()=>`Get 5 cards with Rainbow mutation`, reward:5, done:()=>countCardsWithMutation("rainbow") >= 5 },
+  { id:"m_rarest_legendary_rainbow", label:()=>`Get the rarest Legendary card with Rainbow mutation`, reward:10, done:()=>ownsRarestRarityWithMutation("legendary","rainbow") },
+];
+
+const LUCKY_DRAW_COST_GOLD = 1000000;
+const LUCKY_DRAW_POOL = [
+  { name:"The World", img:"cards/tw.png", gps:1500, rarity:"cosmic", chance:0.01 },
+  { name:"Slime King", img:"cards/sk.png", gps:120, rarity:"epic", chance:0.10 },
+  { name:"Phantom Thief", img:"cards/pt.png", gps:30, rarity:"rare", chance:0.70 },
+];
+
+function countCardsWithMutation(mutKey){
+  const nk = normMutKey(mutKey);
+  let ctr = 0;
+  for (const c of (state.cardsOwned||[])){
+    const muts = getMutationList(c).map(normMutKey);
+    if (muts.includes(nk)) ctr++;
+  }
+  return ctr;
+}
+
+function ownsRarestRarityWithMutation(rarityKey, mutKey){
+  const rarest = getRarestCardDefByRarity(rarityKey);
+  if (!rarest) return false;
+  const nk = normMutKey(mutKey);
+  const targetName = String(rarest.name||"").toLowerCase();
+  return (state.cardsOwned||[]).some(c=>{
+    if (String(c.rarity||"").toLowerCase() !== String(rarityKey).toLowerCase()) return false;
+    if (String(c.name||"").toLowerCase() !== targetName) return false;
+    const muts = getMutationList(c).map(normMutKey);
+    return muts.includes(nk);
+  });
+}
+
+function isMissionClaimed(id){
+  ensureNotifications();
+  return !!state.notifications.claimed?.[id];
+}
+function setMissionClaimed(id){
+  ensureNotifications();
+  state.notifications.claimed[id] = true;
+  saveState();
+  updateNotificationsBadges();
+}
+
+function unclaimedRewardsCount(){
+  let n = 0;
+  for (const m of NOTIF_MISSIONS){
+    if (m.done() && !isMissionClaimed(m.id)) n++;
+  }
+  return n;
+}
+
+function updateNotificationsBadges(){
+  if (!notifBadge || !notifRewardsBadge) return;
+  const n = unclaimedRewardsCount();
+  if (n > 0){
+    notifBadge.style.display = "";
+    notifBadge.textContent = String(n);
+    notifRewardsBadge.style.display = "";
+    notifRewardsBadge.textContent = String(n);
+  }else{
+    notifBadge.style.display = "none";
+    notifRewardsBadge.style.display = "none";
+  }
+}
+
+let notifActiveTab = "rewards";
+function setNotifTab(tab){
+  notifActiveTab = tab;
+  if (notifTabs){
+    const btns = notifTabs.querySelectorAll(".notifTab");
+    btns.forEach(b=>{
+      const t = b.getAttribute("data-tab");
+      if (!t) return;
+      b.classList.toggle("isActive", t === tab);
+    });
+  }
+}
+
+function renderNotifTab(){
+  if (!notifContent) return;
+  updateNotificationsBadges();
+
+  // Always reset the right-side panel so tabs never stack/overlap content
+  notifContent.innerHTML = "";
+
+  if (notifActiveTab === "rewards"){
+    const h = document.createElement("h3");
+    h.textContent = "Rewards Missions";
+    notifContent.appendChild(h);
+
+    const p = document.createElement("div");
+    p.className = "small muted";
+    p.textContent = "Complete missions to claim Lucky Draw tickets.";
+    notifContent.appendChild(p);
+
+    const list = document.createElement("div");
+    list.className = "missionList";
+
+    for (const m of NOTIF_MISSIONS){
+      const done = !!m.done();
+      const claimed = isMissionClaimed(m.id);
+
+      const row = document.createElement("div");
+      row.className = "missionItem";
+
+      const left = document.createElement("div");
+      left.className = "missionLeft";
+
+      const t = document.createElement("div");
+      t.className = "missionTitle";
+      t.textContent = m.label();
+      left.appendChild(t);
+
+      const r = document.createElement("div");
+      r.className = "missionReward";
+      r.textContent = `Reward: ${m.reward} free Lucky Draw ticket${m.reward===1?"":"s"}`;
+      left.appendChild(r);
+
+      const right = document.createElement("div");
+      right.className = "missionRight";
+
+      const pill = document.createElement("span");
+      pill.className = "missionStatus";
+      if (claimed){
+        pill.textContent = "CLAIMED";
+        pill.classList.add("claimed");
+      }else if (done){
+        pill.textContent = "READY";
+        pill.classList.add("done");
+      }else{
+        pill.textContent = "IN PROGRESS";
+      }
+      right.appendChild(pill);
+
+      if (done && !claimed){
+        const btn = document.createElement("button");
+        btn.className = "claimBtn";
+        btn.type = "button";
+        btn.textContent = "Claim";
+        btn.addEventListener("click", ()=>{
+          ensureNotifications();
+          state.notifications.tickets += Number(m.reward)||0;
+          setMissionClaimed(m.id);
+          saveState();
+          toast("Reward Claimed", `+${m.reward} Lucky Draw ticket${m.reward===1?"":"s"}.`);
+          renderNotifTab();
+        });
+        right.appendChild(btn);
+      }
+
+      row.appendChild(left);
+      row.appendChild(right);
+      list.appendChild(row);
+    }
+
+    notifContent.appendChild(list);
+    return;
+  }
+
+  if (notifActiveTab === "lucky"){
+
+    const h = document.createElement("h3");
+    h.textContent = "Lucky Draw Gacha";
+    notifContent.appendChild(h);
+
+    const box = document.createElement("div");
+    box.className = "luckyBox";
+
+    const top = document.createElement("div");
+    top.className = "luckyTop";
+
+    const tickets = document.createElement("div");
+    tickets.className = "luckyTickets";
+    tickets.innerHTML = `<b>Tickets</b> <span>${fmt(state.notifications?.tickets||0)}</span>`;
+    top.appendChild(tickets);
+
+    const actions = document.createElement("div");
+    actions.className = "luckyActions";
+
+    const btnTicket = document.createElement("button");
+    btnTicket.className = "btn btnPrimary";
+    btnTicket.type = "button";
+    btnTicket.textContent = "Spin (1 Ticket)";
+    btnTicket.dataset.sfx = "open-card";
+    btnTicket.disabled = (state.notifications?.tickets||0) < 1;
+    btnTicket.addEventListener("click", ()=>doLuckyDraw("ticket"));
+    actions.appendChild(btnTicket);
+
+    const btnGold = document.createElement("button");
+    btnGold.className = "btn btnGhost";
+    btnGold.type = "button";
+    btnGold.textContent = `Spin (${fmt(LUCKY_DRAW_COST_GOLD)} Gold)`;
+    btnGold.dataset.sfx = "open-card";
+    btnGold.disabled = state.gold < LUCKY_DRAW_COST_GOLD;
+    btnGold.addEventListener("click", ()=>doLuckyDraw("gold"));
+    actions.appendChild(btnGold);
+
+    top.appendChild(actions);
+    box.appendChild(top);
+
+    const note = document.createElement("div");
+    note.className = "small muted";
+    note.textContent = "Mutation chances are the same as opening cards from the inventory.";
+    box.appendChild(note);
+
+    const odds = document.createElement("div");
+    odds.className = "luckyOdds";
+    odds.innerHTML = `
+      <div class="luckyOddsRow"><b>1% chance</b><span>The World (1500 GPS)</span></div>
+      <div class="luckyOddsRow"><b>10% chance</b><span>Slime King (120 GPS)</span></div>
+      <div class="luckyOddsRow"><b>70% chance</b><span>Phantom Thief (30 GPS)</span></div>
+    `;
+    box.appendChild(odds);
+
+    notifContent.appendChild(box);
+    return;
+  }
+
+  // Coming soon tabs
+  const titleMap = {
+    mutation: "Mutation Machine",
+    trade: "Trade",
+    settings: "Settings"
+  };
+  const h = document.createElement("h3");
+  h.textContent = titleMap[notifActiveTab] || "Coming Soon";
+  notifContent.appendChild(h);
+
+  const p = document.createElement("div");
+  p.className = "small muted";
+  p.textContent = "Coming Soon";
+  notifContent.appendChild(p);
+}
+
+function rollMutationKey(){
+  // Uses MUTATIONS table
+  let r = Math.random();
+  for (const m of MUTATIONS){
+    const c = Number(m.chance)||0;
+    if ((r -= c) <= 0) return m.k;
+  }
+  return "Normal";
+}
+
+function rollLuckyDrawReward(){
+  // If totals don't hit 1, remaining becomes Phantom Thief to keep it fair.
+  let r = Math.random();
+  const a = LUCKY_DRAW_POOL[0];
+  const b = LUCKY_DRAW_POOL[1];
+  const c = LUCKY_DRAW_POOL[2];
+  if (r < a.chance) return a;
+  r -= a.chance;
+  if (r < b.chance) return b;
+  // Remaining chunk
+  return c;
+}
+
+function addLuckyDrawCard(def){
+  const card = {
+    id: uid(),
+    name: def.name,
+    img: def.img,
+    rarity: def.rarity,
+    pullChance: 0,
+    baseGps: Number(def.gps)||0,
+    mutations: [],
+    location: "inventory",
+    fav: false
+  };
+  const mk = rollMutationKey();
+  if (normMutKey(mk) !== "normal"){
+    applyMutationToCard(card, mk);
+  }else{
+    recomputeCardStats(card);
+  }
+  state.cardsOwned.push(card);
+  saveState();
+  syncUI();
+  try{ renderCardsModal?.(); }catch(_){}
+  return card;
+}
+
+function showLuckyDrawResult(card){
+  if (!luckyResultOverlay) return;
+
+  luckyResultName.textContent = card.name || "Reward";
+  luckyResultImg.src = card.img || "card.png";
+
+  // Make sure mutation glow is visible here too (same rules as other mutated cards)
+  const wrap = luckyResultOverlay.querySelector(".luckyResultImgWrap");
+  if (wrap){
+    // reset prior state
+    wrap.classList.remove("mutGlow");
+    for (const c of Array.from(wrap.classList)){
+      if (c.startsWith("mut-")) wrap.classList.remove(c);
+    }
+    wrap.style.removeProperty("--mut-glow");
+    wrap.style.removeProperty("--mut-speed");
+    wrap.style.removeProperty("--mut-gradient");
+
+    applyMutationGlow(wrap, card);
+  }
+
+  luckyResultMeta.textContent =
+    `Rarity: ${(card.rarity||"").toUpperCase()} • Mutation: ${mutationLabel(card)} • ${Number(card.gps)||0} GPS`;
+
+  openLuckyResultModal();
+}
+
+function doLuckyDraw(mode){
+  ensureNotifications();
+  if (mode === "ticket"){
+    if ((state.notifications.tickets||0) < 1) return;
+    state.notifications.tickets -= 1;
+  }else{
+    if (state.gold < LUCKY_DRAW_COST_GOLD){
+      toast("Not enough gold", `Need ${fmt(LUCKY_DRAW_COST_GOLD)} gold to spin.`);
+      return;
+    }
+    state.gold -= LUCKY_DRAW_COST_GOLD;
+  }
+
+
+  // Card opening SFX (Lucky Draw)
+  playCardOpeningSFX();
+
+  const def = rollLuckyDrawReward();
+  const card = addLuckyDrawCard(def);
+  toast("Lucky Draw", `You got ${card.name}!`);
+  updateNotificationsBadges();
+
+  // Keep Lucky Draw UI in sync (tickets count + button enable/disable)
+  try{
+    if (notifOverlay && notifOverlay.classList.contains("show") && notifActiveTab === "lucky"){
+      renderNotifTab();
+    }
+  }catch(_){/* noop */}
+
+  showLuckyDrawResult(card);
+}
+
+
+
+
+
+
+
+/* ================= Weather System ================= */
+function getWeatherDef(key){
+  const k = String(key||"normal").toLowerCase();
+  return WEATHER_TABLE.find(w=>w.key===k) || WEATHER_TABLE[0];
+}
+function totalWeatherChance(){
+  return WEATHER_TABLE.reduce((a,w)=>a + (Number(w.chance)||0), 0);
+}
+function rollWeatherKey(){
+  // If totals don't add to 100, treat the remainder as extra "Normal" chance.
+  const total = totalWeatherChance();
+  const normal = getWeatherDef("normal");
+  const remainder = Math.max(0, 100 - total);
+  const rollMax = total + remainder;
+  let r = Math.random() * rollMax;
+
+  // First: explicit table
+  for (const w of WEATHER_TABLE){
+    const c = Number(w.chance)||0;
+    if ((r -= c) <= 0) return w.key;
+  }
+  // Remainder => normal
+  return normal.key;
+}
+function formatCountdown(ms){
+  const s = Math.max(0, Math.ceil(ms/1000));
+  const mm = String(Math.floor(s/60)).padStart(2,"0");
+  const ss = String(s%60).padStart(2,"0");
+  return `${mm}:${ss}`;
+}
+function setWeatherIconUI(key){
+  if (!weatherIconBox || !weatherIcon) return;
+  const def = getWeatherDef(key);
+
+  weatherIcon.textContent = def.icon || "☀";
+
+  weatherIconBox.classList.remove("weather-normal","weather-spacestorm","weather-antigravity","weather-ascension","weather-multiverse");
+  weatherIconBox.classList.add(`weather-${def.key}`);
+}
+function updateWeatherTooltip(){
+  if (!weatherTooltip) return;
+
+  const w = state.weather || {};
+  const active = !!w.active;
+  const def = getWeatherDef(active ? w.currentKey : "normal");
+
+  const countdown = active ? formatCountdown(w.endsAt - Date.now()) : formatCountdown(w.nextEventAt - Date.now());
+
+  const pill = active ? `Weather ends in: ${countdown}` : `Next event in: ${countdown}`;
+
+  let details = "";
+  if (active && def.special){
+    details = `
+      <div class="wtLine"><b>Effect:</b> 10% chance per strike to mutate a random deck card</div>
+      <div class="wtLine"><b>Mutation:</b> ${escapeHtml(def.mutation)} (×${def.mult})</div>
+      <div class="wtLine"><b>Strikes:</b> ${Math.min(WEATHER_STRIKE_ATTEMPTS, (w.strikesDone||0))}/${WEATHER_STRIKE_ATTEMPTS}</div>
+    `;
+  }else{
+    details = `<div class="wtLine">Normal weather. No strikes.</div>`;
+  }
+
+  weatherTooltip.innerHTML = `
+    <div class="wtTitle">
+      <b>${escapeHtml(def.name)}</b>
+      <span class="wtPill">${escapeHtml(pill)}</span>
+    </div>
+    <div class="wtLine"><b>Roll chances:</b> Normal 60% • Space Storm 10% • Anti-Gravity 5% • Ascension 3% • Multiverse 1%</div>
+    ${details}
+  `;
+}
+function showWeatherTicker(text){
+  if (!weatherTicker) return;
+  weatherTicker.textContent = text;
+  weatherTicker.style.display = "block";
+  weatherTicker.classList.remove("pulseIn");
+  void weatherTicker.offsetWidth;
+  weatherTicker.classList.add("pulseIn");
+  setTimeout(()=>{
+    if (weatherTicker) weatherTicker.style.display = "none";
+  }, 4200);
+}
+
+function applyMutationToCard(card, mutationKey){
+  if (!card) return false;
+  const muts = getMutationList(card);
+  const nk = normMutKey(mutationKey);
+  if (!nk || nk === "normal") return false;
+
+  if (muts.map(normMutKey).includes(nk)){
+    // same mutation cannot stack
+    return false;
+  }
+  muts.push(titleMutKey(mutationKey));
+  card.mutations = muts;
+  recomputeCardStats(card);
+  return true;
+}
+
+function pickRandomDeckCardId(){
+  const progTier = getProgressionTier();
+  const ids = [];
+
+  const addFromDeck = (deckKey)=>{
+    const deckArr = state.decks?.[deckKey] || [];
+    for (let idx=0; idx<deckArr.length; idx++){
+      const id = deckArr[idx];
+      if (!id) continue;
+
+      if (deckKey === "B" && progTier < 4) continue;
+
+      const purchased = !!state.deckSlotPurchases?.[deckKey]?.[idx];
+      if (!purchased) continue;
+
+      ids.push(id);
+    }
+  };
+
+  addFromDeck("A");
+  addFromDeck("B");
+
+  if (!ids.length) return null;
+  return ids[Math.floor(Math.random() * ids.length)];
+}
+
+function weatherStrikeAttempt(){
+  const w = state.weather;
+  const def = getWeatherDef(w.currentKey);
+  if (!def.special) return;
+
+  // 10% strike chance (per attempt)
+  if (Math.random() >= WEATHER_STRIKE_CHANCE) return;
+
+  const id = pickRandomDeckCardId();
+  if (!id) return;
+
+  const card = getCardById(id);
+  if (!card) return;
+
+  const applied = applyMutationToCard(card, def.mutation);
+  if (applied){
+    toast(def.name, `${card.name} was struck! +${def.mutation} (×${def.mult})`);
+    saveState();
+    buildSlots();
+    // Keep cards modal fresh if open
+    try{ renderCardsModal?.(); }catch(_){}
+  }else{
+    // Already had the mutation (no stacking)
+    toast(def.name, `${card.name} resisted — already has ${def.mutation}.`);
+  }
+}
+
+function startWeatherEvent(key){
+  const now = Date.now();
+  state.weather.active = true;
+  state.weather.currentKey = key;
+  state.weather.endsAt = now + WEATHER_EVENT_DURATION_MS;
+  state.weather.strikesDone = 0;
+  state.weather.nextStrikeAt = now; // immediate first attempt
+  state.weather.nextAnnounceAt = 0;
+  saveState();
+
+  setWeatherIconUI(key);
+  updateWeatherUI(true);
+}
+
+function endWeatherEvent(){
+  const now = Date.now();
+  const endedKey = state.weather.currentKey;
+
+  state.weather.active = false;
+  state.weather.currentKey = "normal";
+  state.weather.endsAt = 0;
+  state.weather.nextStrikeAt = 0;
+  state.weather.strikesDone = 0;
+
+  // No extra cooldown: next roll starts immediately counting to +5m
+  state.weather.nextEventAt = now + WEATHER_EVENT_INTERVAL_MS;
+
+  // Pick a preview (used by the 1-minute ticker)
+  state.weather.nextPreviewKey = rollWeatherKey();
+  state.weather.nextAnnounceAt = now + 60000;
+
+  saveState();
+
+  setWeatherIconUI("normal");
+  updateWeatherUI(true);
+
+  // Quick toast summary
+  const def = getWeatherDef(endedKey);
+  toast("Weather ended", def.special ? `${def.name} faded.` : "Back to Normal.");
+}
+
+function tickWeather(){
+  if (!state.weather) ensureWeather();
+ensureNotifications();
+  const w = state.weather;
+  const now = Date.now();
+
+  // Active event lifecycle
+  if (w.active){
+    if (now >= w.endsAt){
+      endWeatherEvent();
+      return;
+    }
+    if (w.strikesDone < WEATHER_STRIKE_ATTEMPTS && now >= w.nextStrikeAt){
+      w.nextStrikeAt += WEATHER_STRIKE_INTERVAL_MS;
+      w.strikesDone += 1;
+      weatherStrikeAttempt();
+      saveState();
+    }
+    return;
+  }
+
+  // Roll (every 5 minutes)
+  if (now >= w.nextEventAt){
+    const key = rollWeatherKey();
+    const def = getWeatherDef(key);
+
+    // Normal just advances the schedule
+    if (!def.special){
+      w.currentKey = "normal";
+      w.nextEventAt = now + WEATHER_EVENT_INTERVAL_MS;
+      w.nextPreviewKey = null;
+      w.nextAnnounceAt = 0;
+      saveState();
+      updateWeatherUI(true);
+      return;
+    }
+
+    startWeatherEvent(key);
+    return;
+  }
+
+  // After a special event ends: show "Next weather" hint every minute
+  if (w.nextAnnounceAt && now >= w.nextAnnounceAt){
+    const preview = getWeatherDef(w.nextPreviewKey || rollWeatherKey());
+    const chance = Number(preview.chance)||0;
+    showWeatherTicker(`Next weather: ${preview.name} • Chance: ${chance}%`);
+    w.nextAnnounceAt = now + 60000;
+    // Keep the preview stable-ish
+    w.nextPreviewKey = preview.key;
+    saveState();
+  }
+}
+
+function updateWeatherUI(force){
+  if (!weatherWrap || !weatherTimer || !weatherCountdownText) return;
+
+  const w = state.weather || {};
+  const now = Date.now();
+
+  const active = !!w.active;
+  const timerText = active ? formatCountdown(w.endsAt - now) : formatCountdown(w.nextEventAt - now);
+  weatherTimer.textContent = timerText;
+
+  if (active){
+    weatherCountdownText.textContent = `Weather ends in: ${timerText}`;
+    setWeatherIconUI(w.currentKey);
+  }else{
+    weatherCountdownText.textContent = `Next event in: ${timerText}`;
+    setWeatherIconUI("normal");
+  }
+
+  updateWeatherTooltip();
+}
+
+
+/* ================= PET SHOP ================= */
+let petTimerInterval = null;
+
+function ensurePetRestock(){
+  const now = Date.now();
+  if(!Number.isFinite(state.petShopRestockAt) || state.petShopRestockAt <= now){
+    state.petShopRestockAt = now + 5*60*1000;
+    saveState(state);
+  }
+}
+
+function updatePetsBadge(){
+  const n = Array.isArray(state.petsOwned) ? state.petsOwned.length : 0;
+
+  // Inventory tab badge
+  if (invPetsBadge){
+    invPetsBadge.textContent = String(n);
+    invPetsBadge.style.display = n > 0 ? "inline-flex" : "none";
+  }
+}
+
+function openPetShop(){
+  if(!petShopOverlay) return;
+  // Pet Shop is currently a placeholder UI (Coming Soon)
+  petShopOverlay.classList.add("show");
+  petShopOverlay.setAttribute("aria-hidden","false");
+}
+
+function closePetShop(){
+  if(!petShopOverlay) return;
+  petShopOverlay.classList.remove("show");
+  petShopOverlay.setAttribute("aria-hidden","true");
+}
+
+function startPetTimer(){
+  stopPetTimer();
+  const tick = ()=>{
+    ensurePetRestock();
+    if(petRestockTimer){
+      petRestockTimer.textContent = mmss(state.petShopRestockAt - Date.now());
+    }
+  };
+  tick();
+  petTimerInterval = setInterval(tick, 250);
+}
+
+function stopPetTimer(){
+  if(petTimerInterval){
+    clearInterval(petTimerInterval);
+    petTimerInterval = null;
+  }
+}
+
+function renderPetShop(){
+  if(!petShopGrid) return;
+  petShopGrid.innerHTML = "";
+  PET_CATALOG.forEach(p=>{
+    const card = document.createElement("div");
+    card.className = "petCard";
+    card.innerHTML = `
+      <img src="${p.img}" alt="${p.name}" onerror="this.style.display='none'"/>
+      <div class="petMeta">
+        <b>${p.name}</b>
+        <div class="small">A loyal companion.</div>
+        <div class="petBuyRow">
+          <div class="petPrice">${fmt(p.price)} gold</div>
+          <button class="btn btnPrimary" type="button">Buy</button>
+        </div>
+      </div>
+    `;
+    const btn = card.querySelector("button");
+    btn.disabled = state.gold < p.price;
+    btn.addEventListener("click", ()=>{
+      const tier = getSummonerTier();
+      const limit = petLimitForTier(tier);
+      const ownedN = Array.isArray(state.petsOwned) ? state.petsOwned.length : 0;
+      if (ownedN >= limit){
+        toast("Pet limit reached", `Your current Summoner allows only ${limit} pets.`);
+        return;
+      }
+      if(state.gold < p.price){
+        toast("Not enough gold", "Earn more gold before buying this pet.");
+        return;
+      }
+      state.gold -= p.price;
+      state.petsOwned.push({ id:p.id, name:p.name, img:p.img, price:p.price, boughtAt: Date.now() });
+      saveState(state);
+      syncUI();
+      updatePetsBadge();
+
+      // Purchase SFX (dedicated)
+      playPurchaseSFX();
+      toast("Pet purchased!", `${p.name} added to your Pets.`);
+      renderPetShop();
+    });
+    petShopGrid.appendChild(card);
+  });
+}
+
+/* ================= PETS (Inventory Tab) ================= */
+function renderPets(){
+  if(!invPetsGrid || !invPetsEmpty) return;
+  const pets = Array.isArray(state.petsOwned) ? state.petsOwned : [];
+  invPetsGrid.innerHTML = "";
+  if(pets.length === 0){
+    invPetsEmpty.style.display = "block";
+    return;
+  }
+  invPetsEmpty.style.display = "none";
+  pets.forEach(p=>{
+    const el = document.createElement("div");
+    el.className = "ownedPet";
+    el.innerHTML = `
+      <img src="${p.img}" alt="${p.name}" onerror="this.style.display='none'"/>
+      <div>
+        <b>${p.name}</b>
+        <div class="small">Owned</div>
+      </div>
+    `;
+    invPetsGrid.appendChild(el);
+  });
+}
+
+/* ================= SUMMONERS ================= */
+let selectedSummonerId = "3dm4rk";
+
+function openSummonersModal(){
+  if(!summonersOverlay) return;
+  // default selection
+  selectedSummonerId = (state.summoners && typeof state.summoners.selectedId === "string") ? state.summoners.selectedId : "3dm4rk";
+  renderSummonersList();
+  renderSummonerDetails(selectedSummonerId);
+  summonersOverlay.classList.add("show");
+  summonersOverlay.setAttribute("aria-hidden","false");
+}
+
+function closeSummonersModal(){
+  if(!summonersOverlay) return;
+  summonersOverlay.classList.remove("show");
+  summonersOverlay.setAttribute("aria-hidden","true");
+}
+
+function isSummonerOwned(id){
+  return state.summoners && Array.isArray(state.summoners.owned) && state.summoners.owned.includes(id);
+}
+
+function getSummonerLevel(id){
+  const lv = state.summoners && state.summoners.levels ? state.summoners.levels[id] : 1;
+  return Number.isFinite(lv) ? Math.max(1, lv) : 1;
+}
+
+function summonerUpgradeCostForLevel(lv){
+  // Cost to upgrade from current level -> next
+  // Tier 1->2: 15,000
+  // Tier 2->3: 500,000
+  // Tier 3->4: 1,000,000
+  // Tier 4->5: 5,000,000
+  // Tier 5->6: 15,000,000
+  // Tier 6->7: 25,000,000
+  if (lv === 1) return 15000;
+  if (lv === 2) return 500000;
+  if (lv === 3) return 1000000;
+  if (lv === 4) return 5000000;
+  if (lv === 5) return 15000000;
+  if (lv === 6) return 25000000;
+  return Infinity; // maxed / unavailable
+}
+
+function renderSummonersList(){
+  if(!summonersList) return;
+  summonersList.innerHTML = "";
+
+  const activeId = getActiveSummonerId();
+
+  SUMMONER_CATALOG.forEach((s)=>{
+    const owned = (state.summoners?.owned || []).includes(s.id) || !!s.free;
+    const isActive = (s.id === activeId);
+
+    const item = document.createElement("div");
+    item.className = "summonerItem" + (isActive ? " active" : "");
+
+    item.innerHTML = `
+      <img src="${s.img}" alt="${s.name}" onerror="this.style.display='none'"/>
+      <div>
+        <b>${escapeHtml(s.name)}</b>
+        <div class="small">${isActive ? "In Use" : (owned ? "Owned" : "Locked")}</div>
+      </div>
+    `;
+
+    // Tooltip (shows current effects if this is the active one)
+    item.addEventListener("mouseenter", (e)=>{
+      const tier = summonerTierOfId(s.id);
+      const mult = towerMultiplierForTier(tier);
+      const cap = towerCapForTier(tier);
+      const petLimit = petLimitForTier(tier);
+      const bonus15 = bonusGoldPer15sForTier(tier);
+
+      const html = `
+        <div class="ttName">${escapeHtml(s.name)}</div>
+        <div class="ttRow"><span class="ttBadge">SUMMONER</span>${isActive ? `<span class="ttBadge">IN USE</span>` : ``}</div>
+        <div class="ttRow" style="opacity:.82">${escapeHtml(s.desc || "")}</div>
+        ${isActive ? `<div class="ttRow">Tier ${tier} • ${bonus15>0?`+${fmt(bonus15)}/15s`:"No bonus"} • Pets ${petLimit} • Tower ${mult.toFixed(1)}x (cap ${fmt(cap)})</div>` : ``}
+      `;
+      showTooltipHtml(html, e.clientX, e.clientY);
+    });
+    item.addEventListener("mousemove", (e)=>{
+      // keep same tooltip but follow cursor
+      showTooltipHtml(tooltipEl?.innerHTML || "", e.clientX, e.clientY);
+    });
+    item.addEventListener("mouseleave", hideCardTooltip);
+
+    // Mobile: long-press to show the same hover tooltip
+    bindLongPressTooltip(item, ()=>{
+      const tier = summonerTierOfId(s.id);
+      const mult = towerMultiplierForTier(tier);
+      const cap = towerCapForTier(tier);
+      const petLimit = petLimitForTier(tier);
+      const bonus15 = bonusGoldPer15sForTier(tier);
+      return `
+        <div class="ttName">${escapeHtml(s.name)}</div>
+        <div class="ttRow"><span class="ttBadge">SUMMONER</span>${isActive ? `<span class="ttBadge">IN USE</span>` : ``}</div>
+        <div class="ttRow" style="opacity:.82">${escapeHtml(s.desc || "")}</div>
+        ${isActive ? `<div class="ttRow">Tier ${tier} • ${bonus15>0?`+${fmt(bonus15)}/15s`:"No bonus"} • Pets ${petLimit} • Tower ${mult.toFixed(1)}x (cap ${fmt(cap)})</div>` : ``}
+      `;
+    });
+
+    item.addEventListener("click", ()=>{
+      selectedSummonerId = s.id;
+      renderSummonersList();
+      renderSummonerDetails(s.id);
+
+      if (!owned){
+        toast("Locked", "You don't own this summoner yet.");
+        return;
+      }
+
+      // Switch active summoner (effects change immediately)
+      state.summoners.selectedId = s.id;
+      if(!(state.summoners.owned||[]).includes(s.id)) state.summoners.owned.push(s.id);
+      onActiveSummonerChanged();
+    });
+
+    summonersList.appendChild(item);
+  });
+}
+
+function renderSummonerDetails(id){
+  // Details panel always reflects the CURRENTLY USED summoner (tier-based),
+  // not just whatever you clicked in the list.
+  const mainId = getMainSummonerId();
+  const lv = getSummonerLevel(mainId);
+  const tier = getSummonerTier();
+
+  const activeId = getActiveSummonerId();
+  const s = getSummonerDef(activeId);
+
+  const cost = summonerUpgradeCostForLevel(lv);
+  const mult = towerMultiplierForTier(tier);
+  const cap = towerCapForTier(tier);
+  const petLimit = petLimitForTier(tier);
+  const bonus15 = bonusGoldPer15sForTier(tier);
+
+  if(selectedSummonerName) selectedSummonerName.textContent = s.name;
+  if(summonerDetailName) summonerDetailName.textContent = s.name;
+  if(summonerDetailLevel) summonerDetailLevel.textContent = `Lv. ${lv}`;
+
+  if(summonerDetailText){
+    const lines = [];
+    lines.push(s.desc || "");
+    lines.push(bonus15 > 0 ? `Bonus: +${fmt(bonus15)} gold every 15s.` : "No bonus gold.");
+    if (activeId === "3dm4rk"){
+      lines.push("Deck: Only Deck A (Slots 1–3). Other slots and Deck B are locked.");
+    } else {
+      lines.push(`Deck: Slots 1–3 unlocked. ${tier >= 2 ? "Slots 4–6 unlockable." : "Slots 4–6 locked."} ${tier >= 3 ? "Slots 7–9 unlockable." : "Slots 7–9 locked."} Deck B available (tier-based).`);
+    }
+    lines.push(`Pets allowed: ${petLimit}`);
+    lines.push(`Tower: ${mult.toFixed(1)}x • Cap: ${fmt(cap)} gold`);
+    summonerDetailText.textContent = lines.filter(Boolean).join(" ");
+  }
+
+  if(summonerBonusText){
+    summonerBonusText.textContent = bonus15 <= 0 ? "None" : `+${fmt(bonus15)} / 15s`;
+  }
+  if(summonerUpgradeCost){
+    summonerUpgradeCost.textContent = (cost === Infinity) ? "MAX" : fmt(cost);
+  }
+
+  // Requirements UI
+  if (summonerReqText){
+    const r = getUpgradeRequirementsForLevel(lv);
+    if (r.max){
+      summonerReqText.textContent = "Max level reached.";
+    } else {
+      const dot = (ok)=> ok ? "rgba(90,255,170,.95)" : "rgba(255,110,110,.95)";
+      summonerReqText.innerHTML = r.reqs.map(req=>`
+        <div class="reqRow">
+          <div class="reqLeft">
+            <span class="reqDot" style="background:${dot(req.ok)}"></span>
+            <div class="reqName">${escapeHtml(req.label)}</div>
+          </div>
+          <div class="reqMeta">${req.ok ? "OK" : "Missing"}</div>
+        </div>
+      `).join("") + `<div class="small muted" style="margin-top:10px">Upgrades switch you to: <b>${escapeHtml(getSummonerDef(getSummonerIdForTier(r.nextTier)).name)}</b> (Tier ${r.nextTier})</div>`;
+    }
+  }
+
+  // Upgrade button state
+  if(upgradeSummonerBtn){
+    const chk = canUpgradeMainSummoner();
+    if(cost === Infinity){
+      upgradeSummonerBtn.disabled = true;
+      upgradeSummonerBtn.textContent = "Max Level";
+      upgradeSummonerBtn.title = "";
+    } else if(chk.ok){
+      upgradeSummonerBtn.disabled = false;
+      upgradeSummonerBtn.textContent = `Upgrade (Tier ${lv}→${lv+1})`;
+      upgradeSummonerBtn.title = "";
+    } else {
+      upgradeSummonerBtn.disabled = true;
+      upgradeSummonerBtn.textContent = "Upgrade Locked";
+      upgradeSummonerBtn.title = chk.reason || "Requirements not met.";
+    }
+  }
+}
+
+function upgradeSelectedSummoner(){
+  const mainId = getMainSummonerId();
+  const lv = getSummonerLevel(mainId);
+  const cost = summonerUpgradeCostForLevel(lv);
+
+  const chk = canUpgradeMainSummoner();
+  if (!chk.ok){
+    toast("Upgrade Locked", chk.reason || "Requirements not met.");
+    renderSummonerDetails(mainId);
+    return;
+  }
+
+  // Pay + progress tier
+  state.gold -= cost;
+  playPurchaseSFX();
+  state.summoners.levels[mainId] = lv + 1;
+
+  // Switch to the NEXT summoner (tier-based)
+  const nextTier = lv + 1;
+  const nextSummonerId = getSummonerIdForTier(nextTier);
+  state.summoners.selectedId = nextSummonerId;
+
+  if(!state.summoners.owned.includes(nextSummonerId)) state.summoners.owned.push(nextSummonerId);
+  if(!state.summoners.levels[nextSummonerId]) state.summoners.levels[nextSummonerId] = 1;
+
+  // When upgrading, reset tower timer cleanly and allow new cap/mult
+  tickTowers();
+  state.towers.lastTs = Date.now();
+
+  saveState(state);
+  syncUI();
+
+  const nextSummoner = getSummonerDef(nextSummonerId);
+  toast("Upgraded!", `Switched to ${nextSummoner.name} (Tier ${nextTier}).`);
+
+  renderSummonersList();
+  renderSummonerDetails(mainId);
+}
+
+/* ================= GOLD PLACEHOLDER (STATIC) ================= */
+function tickTowers(){
+  const now = Date.now();
+  if (!state.towers) ensureTowers();
+  const last = Number(state.towers.lastTs) || now;
+  const dt = Math.max(0, (now - last) / 1000);
+
+  const tier = getSummonerTier();
+  const cap = towerCapForTier(tier);
+  const mult = towerMultiplierForTier(tier);
+
+  // If already at cap, stop generating until collected
+  const storedNow = Number(state.towers.stored) || 0;
+  if (storedNow >= cap){
+    state.towers.stored = cap;
+    state.towers.lastTs = now;
+    return;
+  }
+
+  const rate = computeDeckGps() * mult; // gold per second
+  const next = storedNow + rate * dt;
+  state.towers.stored = Math.min(cap, next);
+  state.towers.lastTs = now;
+}
+
+function collectTowersGold(){
+  tickTowers();
+  const gain = Math.floor(state.towers.stored || 0);
+  if (gain <= 0) return;
+
+  // Tower collect SFX (dedicated)
+  playTowerGoldSFX();
+  state.gold += gain;
+  state.towers.stored = 0;
+  state.towers.lastTs = Date.now();
+  saveState();
+  syncUI();
+}
+
+function tickSummonerBonus(){
+  const tier = getSummonerTier();
+  const now = Date.now();
+  if (!state.summoners) return;
+
+  let changed = false;
+
+  // --- Fixed 15s bonus (normal summoners) ---
+  const bonus15 = bonusGoldPer15sForTier(tier);
+  if (!Number.isFinite(state.summoners.nextBonusAt)) state.summoners.nextBonusAt = now + 15000;
+
+  if (bonus15 > 0 && now >= state.summoners.nextBonusAt){
+    // catch up (avoid huge loops)
+    const missed = Math.min(10, Math.floor((now - state.summoners.nextBonusAt) / 15000) + 1);
+    const gain = bonus15 * missed;
+
+    state.gold += gain;
+    state.summoners.nextBonusAt += missed * 15000;
+    changed = true;
+
+
+    // Passive ability gold SFX (dedicated)
+    playAbilityGoldSFX();
+
+    showGoldPop(gain, openGoldPanel || null);
+    toast("Summoner Bonus", `+${fmt(gain)} gold`);
+  }
+
+  // --- Zeno special: 50% chance +1,000,000 gold every 1 minute ---
+  if (tier >= 7){
+    if (!Number.isFinite(state.summoners.nextZenoAt)) state.summoners.nextZenoAt = now + 60000;
+
+    if (now >= state.summoners.nextZenoAt){
+      // advance timer (catch up but don't spam RNG)
+      const missed = Math.min(3, Math.floor((now - state.summoners.nextZenoAt) / 60000) + 1);
+      state.summoners.nextZenoAt += missed * 60000;
+      changed = true;
+
+      // one RNG roll per trigger (even if missed > 1)
+      if (Math.random() < 0.5){
+        const gain = 1000000;
+        state.gold += gain;
+        changed = true;
+        showGoldPop(gain, openGoldPanel || null);
+        toast("Zeno Blessing", `+${fmt(gain)} gold`);
+
+        // Passive ability gold SFX (dedicated)
+        playAbilityGoldSFX();
+      }
+    }
+  }
+
+  if (changed){
+    saveState(state);
+    syncUI();
+  }
+}
+
+function initGoldPlaceholder(){
+  if(!openGoldPanel) return;
+
+  openGoldPanel.dataset.sfx = "tower";
+
+  const act = ()=>{
+    collectTowersGold();
+  };
+
+  openGoldPanel.addEventListener("click", act);
+  openGoldPanel.addEventListener("keydown", (e)=>{
+    if(e.key==="Enter" || e.key===" "){ e.preventDefault(); act(); }
+  });
+}
+
+
+/* ================= Gallery (All Cards) ================= */
+const GALLERY_RARITY_ORDER = ["common","rare","epic","mythical","legendary","cosmic","interstellar"];
+
+function buildGalleryList(){
+  const list = [];
+  for (const r of GALLERY_RARITY_ORDER){
+    const pool = CARD_REWARDS[r] || [];
+    for (const c of pool){
+      const baseGps = CARD_GPS[c.name] ?? 0;
+      list.push({
+        name: c.name,
+        img: c.img,
+        rarity: r,
+        baseGps: baseGps,
+        mutations: [],
+        gps: baseGps
+      });
+    }
+  }
+
+// Include Lucky Draw pool cards in gallery (so Lucky Draw rewards also appear here)
+try{
+  const seen = new Set(list.map(x => `${String(x.rarity||"")}::${String(x.name||"")}`));
+  if (Array.isArray(LUCKY_DRAW_POOL)){
+    for (const c of LUCKY_DRAW_POOL){
+      const rarity = String(c.rarity || "common").toLowerCase();
+      const key = `${rarity}::${String(c.name||"")}`;
+      if (seen.has(key)) continue;
+
+      const baseGps = Number(c.gps) || (CARD_GPS[c.name] ?? 0);
+      list.push({
+        name: c.name,
+        img: c.img,
+        rarity: rarity,
+        baseGps: baseGps,
+        mutations: [],
+        gps: baseGps
+      });
+      seen.add(key);
+    }
+  }
+
+  // Keep ordering consistent (rarity order, then name)
+  const rIndex = new Map(GALLERY_RARITY_ORDER.map((r,i)=>[r,i]));
+  list.sort((a,b)=>{
+    const da = rIndex.get(a.rarity); const db = rIndex.get(b.rarity);
+    return ((da??999)-(db??999)) || String(a.name||"").localeCompare(String(b.name||""));
+  });
+}catch(_){ /* noop */ }
+
+  return list;
+}
+const ALL_GALLERY_CARDS = buildGalleryList();
+
+function openGallery(){
+  if (!galleryOverlay) return;
+  if (gallerySearch) gallerySearch.value = "";
+  renderGallery("");
+  galleryOverlay.classList.add("show");
+  galleryOverlay.setAttribute("aria-hidden","false");
+  setTimeout(()=> gallerySearch?.focus?.(), 0);
+}
+
+function closeGallery(){
+  if (!galleryOverlay) return;
+  galleryOverlay.classList.remove("show");
+  galleryOverlay.setAttribute("aria-hidden","true");
+  if (typeof hideTooltip === 'function') hideTooltip();
+}
+
+function renderGallery(q){
+  if (!galleryGrid) return;
+
+  const query = String(q || "").trim().toLowerCase();
+  const filtered = !query
+    ? ALL_GALLERY_CARDS
+    : ALL_GALLERY_CARDS.filter(c => String(c.name||"").toLowerCase().includes(query));
+
+  galleryGrid.innerHTML = "";
+
+  for (const card of filtered){
+    const tile = document.createElement("div");
+    tile.className = `gCard r-${card.rarity}`;
+    tile.innerHTML = `
+      <img src="${escapeHtml(card.img)}" alt="${escapeHtml(card.name)}" loading="lazy" decoding="async"
+           onerror="this.style.display='none'"/>
+    `;
+
+    // Hover tooltip: name / rarity / GPS
+    tile.addEventListener("mouseenter", (e)=>{
+      tooltipPinned = false;
+      showCardTooltip(card, e.clientX, e.clientY);
+    });
+    tile.addEventListener("mousemove", (e)=>{
+      if (!tooltipPinned) positionTooltip(e.clientX, e.clientY);
+    });
+    tile.addEventListener("mouseleave", ()=>{
+      if (!tooltipPinned) hideTooltip();
+    });
+
+    // Mobile: long-press to show the same hover tooltip
+    bindLongPressTooltip(tile, ()=>formatCardDetails(card));
+
+    galleryGrid.appendChild(tile);
+  }
+
+  if (galleryEmpty){
+    galleryEmpty.style.display = (filtered.length === 0) ? "block" : "none";
+  }
+  if (galleryCount){
+    galleryCount.textContent = `${filtered.length.toLocaleString("en-US")} cards`;
+  }
+}
+
+
+/* ================= Events ================= */
+if (openGalleryBtn) openGalleryBtn.addEventListener("click", openGallery);
+if (closeGalleryBtn) closeGalleryBtn.addEventListener("click", closeGallery);
+if (galleryOverlay) galleryOverlay.addEventListener("click", (e)=>{ if (e.target === galleryOverlay) closeGallery(); });
+if (gallerySearch) gallerySearch.addEventListener("input", (e)=> renderGallery(e.target.value));
+
+document.addEventListener("keydown", (e)=>{ if(e.key==="Escape" && galleryOverlay && galleryOverlay.classList.contains("show")) closeGallery(); });
+
+openInvBtn.addEventListener("click", openInventory);
+invOkBtn.addEventListener("click", closeInventory);
+closeInvBtn.addEventListener("click", closeInventory);
+invOverlay.addEventListener("click", (e)=>{ if(e.target === invOverlay) closeInventory(); });
+
+openCardsBtn.addEventListener("click", openCards);
+if (cardsSearchInput){ cardsSearchInput.addEventListener("input", renderCardsModal); }
+cardsOkBtn.addEventListener("click", closeCards);
+
+
+// Notifications
+if (openNotifBtn){
+  openNotifBtn.addEventListener("click", openNotifications);
+}
+if (notifOkBtn){
+  notifOkBtn.addEventListener("click", closeNotifications);
+}
+if (closeNotifBtn){
+  closeNotifBtn.addEventListener("click", closeNotifications);
+}
+if (notifOverlay){
+  notifOverlay.addEventListener("click", (e)=>{ if(e.target === notifOverlay) closeNotifications(); });
+}
+if (notifTabs){
+  notifTabs.addEventListener("click", (e)=>{
+    const btn = e.target.closest(".notifTab");
+    if (!btn) return;
+    const tab = btn.getAttribute("data-tab");
+    if (!tab) return;
+    setNotifTab(tab);
+    renderNotifTab();
+  });
+}
+
+// Lucky result modal
+if (luckyResultOkBtn) luckyResultOkBtn.addEventListener("click", closeLuckyResultModal);
+if (closeLuckyResultBtn) closeLuckyResultBtn.addEventListener("click", closeLuckyResultModal);
+if (luckyResultOverlay){
+  luckyResultOverlay.addEventListener("click", (e)=>{ if(e.target === luckyResultOverlay) closeLuckyResultModal(); });
+}
+
+
+
+const sellAllCardsBtn = document.getElementById("sellAllCardsBtn");
+if (sellAllCardsBtn){
+  sellAllCardsBtn.addEventListener("click", ()=>{
+    ensureDeckCardLocations();
+
+    // IMPORTANT: Selling from Cards modal only sells INVENTORY cards (not decked cards).
+    const invCards = getInventoryCards();
+    const sellable = invCards.filter(c => !c?.fav);
+    if (!invCards.length){
+      toast("No inventory cards", "You have no cards in inventory to sell.");
+      return;
+    }
+
+    const ok = confirm(`Sell ALL unhearted inventory cards (${sellable.length})? Hearted cards will be kept. Deck cards will NOT be affected.`);
+    if (!ok) return;
+
+    let gained = 0;
+    for (const c of sellable){
+      gained += computeSellGold(c);
+    }
+
+    // Remove only inventory cards (keep deck cards in collection)
+    state.cardsOwned = (state.cardsOwned||[]).filter(c => {
+      const loc = (c?.location||"inventory");
+      if (loc !== "inventory") return true;
+      return c?.fav === true; // keep hearted inventory cards
+    });
+
+    state.gold = (Number(state.gold)||0) + gained;
+    saveState();
+    syncUI();
+    renderCardsModal();
+    buildSlots();
+    updateTowersUI();
+    toast("Sold!", `You gained ${fmt(gained)} gold.`);
+  });
+}
+
+closeCardsBtn.addEventListener("click", closeCards);
+cardsOverlay.addEventListener("click", (e)=>{ if(e.target === cardsOverlay) closeCards(); });
+
+if (closeDeckBtn){
+  closeDeckBtn.addEventListener("click", closeDeckPicker);
+}
+if (deckOverlay){
+  deckOverlay.addEventListener("click", (e)=>{
+    if (e.target === deckOverlay) closeDeckPicker();
+  });
+}
+if (deckSelectBtn){
+  deckSelectBtn.addEventListener("click", ()=>{
+    if (!deckPicking || !deckPicking.selectedCardId) return;
+    ensureDecks();
+    // Safety: prevent the same exact card instance from being used in multiple slots/decks
+    const curId = state.decks?.[deckPicking.deckKey]?.[deckPicking.idx] || null;
+    const used = getUsedDeckCardIdSet(curId);
+    if (used.has(deckPicking.selectedCardId)){
+      toast("Card already in a deck", "That card is already placed in another deck slot.");
+      return;
+    }
+    // If replacing, return old card back to inventory
+    if (curId){
+      state.decks[deckPicking.deckKey][deckPicking.idx] = null;
+      moveCardToInventory(curId);
+    }
+    // Consume chosen card from inventory into deck storage
+    if (!moveCardToDeck(deckPicking.selectedCardId, deckPicking.deckKey, deckPicking.idx)){
+      toast("Missing card", "That card isn't available in your inventory (it might already be in a deck).");
+      return;
+    }
+    state.decks[deckPicking.deckKey][deckPicking.idx] = deckPicking.selectedCardId;
+
+    saveState();
+    syncUI(); // updates badges (Cards), slots, towers, etc.
+    closeDeckPicker();
+    toast("Deck Updated", `Placed a card into Deck ${deckPicking.deckKey} Slot ${deckPicking.idx+1}`);
+  });
+}
+
+
+rewardsOkBtn.addEventListener("click", closeRewards);
+closeRewardsBtn.addEventListener("click", closeRewards);
+rewardsOverlay.addEventListener("click", (e)=>{ if(e.target === rewardsOverlay) closeRewards(); });
+
+/* Pets + Pet Shop */
+if(openPetShopBtn){
+  openPetShopBtn.addEventListener("click", openPetShop);
+}
+if(petShopOkBtn) petShopOkBtn.addEventListener("click", closePetShop);
+if(closePetShopBtn) closePetShopBtn.addEventListener("click", closePetShop);
+if(petShopOverlay) petShopOverlay.addEventListener("click", (e)=>{ if(e.target === petShopOverlay) closePetShop(); });
+
+
+/* Summoners */
+if(openSummoners){
+  openSummoners.addEventListener("click", openSummonersModal);
+  openSummoners.addEventListener("keydown", (e)=>{ if(e.key==="Enter" || e.key===" "){ e.preventDefault(); openSummonersModal(); }});
+  bindSummonerTooltip(openSummoners);
+}
+if(upgradeSummonerBtn) upgradeSummonerBtn.addEventListener("click", upgradeSelectedSummoner);
+if(summonersOkBtn) summonersOkBtn.addEventListener("click", closeSummonersModal);
+if(closeSummonersBtn) closeSummonersBtn.addEventListener("click", closeSummonersModal);
+if(summonersOverlay) summonersOverlay.addEventListener("click", (e)=>{ if(e.target === summonersOverlay) closeSummonersModal(); });
+
+window.addEventListener("keydown", (e)=>{
+  if(e.key !== "Escape") return;
+  if (rewardsOverlay.classList.contains("show")) closeRewards();
+  if (invOverlay.classList.contains("show")) closeInventory();
+  if (cardsOverlay.classList.contains("show")) closeCards();
+});
+
+/* ================= Boot ================= */
+function boot(){
+  buildMarquee();
+  buildSlots();
+  updateTowersUI();
+  syncUI();
+  updatePetsBadge();
+  initGoldPlaceholder();
+  let _towersSaveCtr = 0;
+  setInterval(()=>{ tickTowers(); tickSummonerBonus(); tickWeather(); updateTowersUI(); updateWeatherUI(); if((++_towersSaveCtr % 40)===0) saveState(); }, 250);
+
+
+  const cardW = 210, gap = 22;
+  x = -Math.random() * (22 * (cardW + gap));
+  track.style.transform = `translate3d(${x}px,-50%,0)`;
+  requestAnimationFrame(loop);
+}
+boot();
