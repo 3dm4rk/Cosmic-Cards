@@ -361,17 +361,17 @@ const MUTATIONS = [
    - Strikes can add STACKABLE mutations (unique per mutation key)
 */
 const WEATHER_EVENT_INTERVAL_MS = 5 * 60 * 1000;
-const WEATHER_EVENT_DURATION_MS = 30 * 1000;
+const WEATHER_EVENT_DURATION_MS = 90 * 1000; // 1m30s
 const WEATHER_STRIKE_INTERVAL_MS = 10 * 1000;
-const WEATHER_STRIKE_ATTEMPTS = 3;
+const WEATHER_STRIKE_ATTEMPTS = 9; // every 10s for 1m30s
 const WEATHER_STRIKE_CHANCE = 0.10;
 
 const WEATHER_TABLE = [
   { key:"normal",      name:"Normal Weather", icon:"☀", chance:60, special:false },
-  { key:"spacestorm",  name:"Space Storm",    icon:"🌩", chance:10, special:true, mutation:"Thunder",  mult:2 },
-  { key:"antigravity", name:"Anti-Gravity",   icon:"🪐", chance:5,  special:true, mutation:"Blackhole", mult:3 },
-  { key:"ascension",   name:"Ascension",      icon:"✨", chance:3,  special:true, mutation:"Godly",    mult:4 },
-  { key:"multiverse",  name:"Multiverse",     icon:"🌌", chance:1,  special:true, mutation:"Heavenly", mult:5 },
+  { key:"spacestorm",  name:"Space Storm",    icon:"🌩", chance:40, special:true, mutation:"Thunder",  mult:2 },
+  { key:"antigravity", name:"Anti-Gravity",   icon:"🪐", chance:25,  special:true, mutation:"Blackhole", mult:3 },
+  { key:"ascension",   name:"Ascension",      icon:"✨", chance:15,  special:true, mutation:"Godly",    mult:4 },
+  { key:"multiverse",  name:"Multiverse",     icon:"🌌", chance:5,  special:true, mutation:"Heavenly", mult:5 },
 ];
 
 const MUTATION_MULTS = {
@@ -412,8 +412,8 @@ migrateCards();
 ensureDeckSlotPurchases();
 ensureDeckCardLocations();
 ensureDeckCardLocations();
-if (!state.summoners || typeof state.summoners !== 'object') state.summoners = {selectedId:'3dm4rk', owned:['3dm4rk'], levels:{'3dm4rk':1}, nextBonusAt: Date.now()+15000, nextZenoAt: Date.now()+60000};
-if (!Number.isFinite(state.summoners.nextBonusAt)) state.summoners.nextBonusAt = Date.now()+15000;
+if (!state.summoners || typeof state.summoners !== 'object') state.summoners = {selectedId:'3dm4rk', owned:['3dm4rk'], levels:{'3dm4rk':1}, nextBonusAt: Date.now()+30000, nextZenoAt: Date.now()+60000};
+if (!Number.isFinite(state.summoners.nextBonusAt)) state.summoners.nextBonusAt = Date.now()+30000;
 
 if (!Number.isFinite(state.summoners.nextZenoAt)) state.summoners.nextZenoAt = Date.now()+60000;
 
@@ -491,6 +491,30 @@ const deckDetailsGps = document.getElementById("deckDetailsGps");
 
 let deckPicking = null; // { deckKey, idx, selectedCardId }
 
+// Mutation Machine modals
+const mmSelectOverlay = document.getElementById("mmSelectOverlay");
+const closeMmSelectBtn = document.getElementById("closeMmSelectBtn");
+const mmPickGrid = document.getElementById("mmPickGrid");
+const mmPickEmpty = document.getElementById("mmPickEmpty");
+const mmSelectBtn = document.getElementById("mmSelectBtn");
+
+const mmDetailsImg = document.getElementById("mmDetailsImg");
+const mmDetailsName = document.getElementById("mmDetailsName");
+const mmDetailsRarity = document.getElementById("mmDetailsRarity");
+const mmDetailsChance = document.getElementById("mmDetailsChance");
+const mmDetailsMutation = document.getElementById("mmDetailsMutation");
+const mmDetailsGps = document.getElementById("mmDetailsGps");
+
+const mmResultOverlay = document.getElementById("mmResultOverlay");
+const closeMmResultBtn = document.getElementById("closeMmResultBtn");
+const mmResultName = document.getElementById("mmResultName");
+const mmResultImg = document.getElementById("mmResultImg");
+const mmResultMeta = document.getElementById("mmResultMeta");
+const mmResultOkBtn = document.getElementById("mmResultOkBtn");
+const mmResultImgWrap = document.getElementById("mmResultImgWrap");
+
+let mmPicking = null; // { selectedCardId }
+
 const cardsOverlay = document.getElementById("cardsOverlay");
 const cardsGrid = document.getElementById("cardsGrid");
 const cardsSearchInput = document.getElementById("cardsSearchInput");
@@ -513,6 +537,8 @@ const invPanelPets = document.getElementById("invPanelPets");
 const invPacksBadge = document.getElementById("invPacksBadge");
 const invPetsBadge = document.getElementById("invPetsBadge");
 
+const invPanelCards = document.getElementById("invPanelCards");
+const invCardsBadge = document.getElementById("invCardsBadge");
 // Pets live inside Inventory now
 const invPetsGrid = document.getElementById("invPetsGrid");
 const invPetsEmpty = document.getElementById("invPetsEmpty");
@@ -690,42 +716,52 @@ function petLimitForTier(tier){
   return 1;
 }
 function towerMultiplierForTier(tier){
-  if (tier >= 5) return 2.5;   // Void (optional spice)
-  if (tier >= 3) return 2.0;   // Ember/Aegis
-  if (tier >= 2) return 1.5;   // Nova
+  // Rebalanced multipliers (SPEC)
+  // 1 Roylier: 1.0x
+  // 2 Nova:    1.2x
+  // 3 Ember:   1.5x
+  // 4 Aegis:   1.7x
+  // 5 Void:    2.0x
+  // 6 Zioti:   2.2x
+  // 7 Zeno:    2.5x
+  tier = Number(tier)||1;
+  if (tier >= 7) return 2.5;
+  if (tier >= 6) return 2.2;
+  if (tier >= 5) return 2.0;
+  if (tier >= 4) return 1.7;
+  if (tier >= 3) return 1.5;
+  if (tier >= 2) return 1.2;
   return 1.0;
 }
 function towerCapForTier(tier){
   // Tower storage cap by tier (IMPORTANT: this should NOT cap the player's main gold)
-  // Zeno: tower cap 1,000,000
-  if (tier >= 7) return 1000000; // Zeno (SPEC)
-  // Zioti SPEC: 200,000 cap
-  if (tier >= 6) return 200000; // Zioti (SPEC)
-  // Existing progression caps
-  if (tier >= 5) return 200000; // Void
-  if (tier >= 4) return 150000; // Aegis
-  if (tier >= 3) return 100000; // Ember
-  if (tier >= 2) return 50000;  // Nova
-  return 20000;                 // 3dm4rk
+  // Rebalanced caps (SPEC)
+  tier = Number(tier)||1;
+  if (tier >= 7) return 1000000; // Zeno
+  if (tier >= 6) return 500000;  // Zioti
+  if (tier >= 5) return 200000;  // Void
+  if (tier >= 4) return 150000;  // Aegis
+  if (tier >= 3) return 100000;  // Ember
+  if (tier >= 2) return 50000;   // Nova
+  return 20000;                  // Roylier (3dm4rk)
 }
-function bonusGoldPer15sForTier(tier){
-  // Active bonus by tier
-  // Zeno SPEC: uses a separate 1-minute RNG bonus (no fixed 15s bonus)
+function bonusGoldPer30sForTier(tier){
+  // Active bonus by tier (SPEC)
+  // NOTE: Zeno uses a separate 1-minute RNG bonus (no fixed 30s bonus)
+  tier = Number(tier)||1;
   if (tier >= 7) return 0;
-  // Zioti SPEC: +1,500 gold every 15 seconds
-  if (tier >= 6) return 1500; // Zioti (SPEC)
-  // Keep existing balance for earlier summoners
-  if (tier >= 5) return 2000; // Void
-  if (tier >= 4) return 1000; // Aegis
-  if (tier >= 3) return 1000; // Ember
-  if (tier >= 2) return 500;  // Nova
-  return 0;
+  if (tier >= 6) return 3000; // Zioti: +3,000 / 30s
+  if (tier >= 5) return 2000; // Void:  +2,000 / 30s
+  if (tier >= 4) return 1500; // Aegis: +1,500 / 30s
+  if (tier >= 3) return 1000; // Ember: +1,000 / 30s
+  if (tier >= 2) return 500;  // Nova:  +500  / 30s
+  return 0;                   // Roylier: none
 }
 
 function onActiveSummonerChanged(){
   // Reset bonus timers so previous summoner effects don't linger
   if (state?.summoners){
-    state.summoners.nextBonusAt = Date.now() + 15000;
+    state.summoners.nextBonusAt = Date.now() + 30000;
     state.summoners.nextZenoAt = Date.now() + 60000;
   }
 
@@ -989,7 +1025,7 @@ function defaultState(){
       selectedId: "3dm4rk",
       owned: ["3dm4rk"],
       levels: {"3dm4rk": 1},
-      nextBonusAt: Date.now() + 15000,
+      nextBonusAt: Date.now() + 30000,
       nextZenoAt: Date.now() + 60000
     },
     towers: { stored: 0, lastTs: Date.now() },
@@ -1168,6 +1204,13 @@ function getMutationList(card){
   }
   return out;
 }
+
+function clearAllMutations(card){
+  if (!card || typeof card !== "object") return;
+  // Clear both the modern stacked list and legacy single-mutation field
+  card.mutations = [];
+  if (card.mutation && typeof card.mutation === "object") delete card.mutation;
+}
 function getTotalMutationMult(card){
   const muts = getMutationList(card);
   let mult = 1.0;
@@ -1320,7 +1363,29 @@ function ensureNotifications(){
   if (!state.notifications.claimed || typeof state.notifications.claimed !== "object"){
     state.notifications.claimed = {};
   }
+
+  // Mutation Machine (persisted)
+  if (!state.notifications.mutationMachine || typeof state.notifications.mutationMachine !== "object"){
+    state.notifications.mutationMachine = {
+      cardId: null,
+      startAt: 0,
+      endAt: 0,
+      status: "idle",     // idle | running | done
+      speedOption: "wait",
+      resultMutation: null,
+      revealed: false,
+      doneNotified: false
+    };
+  }
+  const mm = state.notifications.mutationMachine;
+  if (!Number.isFinite(mm.startAt)) mm.startAt = 0;
+  if (!Number.isFinite(mm.endAt)) mm.endAt = 0;
+  if (typeof mm.status !== "string") mm.status = "idle";
+  if (typeof mm.revealed !== "boolean") mm.revealed = false;
+  if (typeof mm.speedOption !== "string") mm.speedOption = "wait";
+  if (typeof mm.doneNotified !== "boolean") mm.doneNotified = false;
 }
+
 
 
 /* ================= Deck helpers ================= */
@@ -1762,10 +1827,10 @@ function formatSummonerTooltip(){
   const mult = towerMultiplierForTier(tier);
   const cap = towerCapForTier(tier);
   const petLimit = petLimitForTier(tier);
-  const bonus15 = bonusGoldPer15sForTier(tier);
+  const bonus15 = bonusGoldPer30sForTier(tier);
 
   const lines = [];
-  lines.push(bonus15 > 0 ? `+${fmt(bonus15)} gold / 15s` : "No bonus gold");
+  lines.push(bonus15 > 0 ? `+${fmt(bonus15)} gold / 30s` : "No bonus gold");
   lines.push(`Pets: ${petLimit}`);
   lines.push(`Tower: ${mult.toFixed(1)}x • Cap ${fmt(cap)}`);
   lines.push(`Deck: ${activeId==="3dm4rk" ? "Only Deck A slots 1–3" : "Tier-based slots + Deck B"}`);
@@ -2129,7 +2194,19 @@ function doReveal(){
 /* ================= Cards modal ================= */
 function updateCardsBadge(){
   const available = getUnassignedCards();
-  cardsBadge.textContent = String(available.length);
+  const n = available.length;
+
+  // Old header badge (may not exist anymore)
+  if (cardsBadge){
+    cardsBadge.textContent = String(n);
+    cardsBadge.style.display = n > 0 ? "inline-flex" : "none";
+  }
+
+  // New Inventory → Cards tab badge
+  if (invCardsBadge){
+    invCardsBadge.textContent = String(n);
+    invCardsBadge.style.display = n > 0 ? "inline-flex" : "none";
+  }
 }
 
 function getHeartedInventoryCount(){
@@ -2365,28 +2442,34 @@ function setDeckDetails(card){
 
 /* ================= Modals open/close ================= */
 function setInventoryTab(tab){
-  const t = (tab === "pets") ? "pets" : "packs";
+  const t = (tab === "pets" || tab === "cards") ? tab : "packs";
 
   if (invTabs){
     invTabs.querySelectorAll(".invTab").forEach(btn=>{
       btn.classList.toggle("isActive", btn.dataset.tab === t);
     });
   }
+
   if (invPanelPacks) invPanelPacks.style.display = (t === "packs") ? "block" : "none";
-  if (invPanelPets) invPanelPets.style.display = (t === "pets") ? "block" : "none";
+  if (invPanelPets)  invPanelPets.style.display  = (t === "pets")  ? "block" : "none";
+  if (invPanelCards) invPanelCards.style.display = (t === "cards") ? "block" : "none";
 
   // Render content for the active panel
   if (t === "packs") renderInventory();
-  else renderPets();
+  else if (t === "pets") renderPets();
+  else renderCardsModal();
 
   // keep badges up to date
   updatePetsBadge();
+  updateCardsBadge();
+
   if (invPacksBadge){
     const total = Object.values(state.invCounts || {}).reduce((a,n)=>a+(Number(n)||0),0);
     invPacksBadge.textContent = String(total);
     invPacksBadge.style.display = total > 0 ? "inline-flex" : "none";
   }
 }
+
 
 function openInventory(){
   if (!invOverlay) return;
@@ -2441,15 +2524,34 @@ function closeLuckyResultModal(){
 }
 
 function openCards(){
+  // Cards are now inside the Inventory modal (tab: Cards)
+  if (invOverlay){
+    if (!state.ui || typeof state.ui !== "object") state.ui = {};
+    state.ui.invTab = "cards";
+    saveState(state);
+    openInventory();
+    return;
+  }
+
+  // Fallback (if Inventory modal isn't present)
   renderCardsModal();
-  cardsOverlay.classList.add("show");
-  cardsOverlay.setAttribute("aria-hidden","false");
+  if (cardsOverlay){
+    cardsOverlay.classList.add("show");
+    cardsOverlay.setAttribute("aria-hidden","false");
+  }
 }
 function closeCards(){
-  cardsOverlay.classList.remove("show");
-  cardsOverlay.setAttribute("aria-hidden","true");
+  // Close Inventory if it's open
+  if (invOverlay && invOverlay.classList.contains("show")){
+    closeInventory();
+    return;
+  }
+  // Fallback to old overlay if it exists
+  if (cardsOverlay){
+    cardsOverlay.classList.remove("show");
+    cardsOverlay.setAttribute("aria-hidden","true");
+  }
 }
-
 /* ================= Animation loop ================= */
 function loop(now){
   const dt = Math.min(0.05, (now - lastTime)/1000);
@@ -2490,6 +2592,8 @@ function buildSlots(){
       const c = getCardById(assignedId);
       if (c){
         s.classList.add("assigned");
+
+        s.dataset.cardId = assignedId;
 
         applyMutationGlow(s, c);
 
@@ -2873,9 +2977,13 @@ function renderNotifTab(){
     return;
   }
 
+  if (notifActiveTab === "mutation"){
+    renderMutationMachinePanel();
+    return;
+  }
+
   // Coming soon tabs
   const titleMap = {
-    mutation: "Mutation Machine",
     trade: "Trade",
     settings: "Settings"
   };
@@ -2887,6 +2995,623 @@ function renderNotifTab(){
   p.className = "small muted";
   p.textContent = "Coming Soon";
   notifContent.appendChild(p);
+}
+
+
+/* ================= Mutation Machine (Notifications) ================= */
+const MUTATION_MACHINE_DURATION_MS = 25 * 60 * 1000;
+
+const MUTATION_MACHINE_TABLE = [
+  { k: "Normal", w: 60 },
+  { k: "Silver", w: 30 },
+  { k: "Gold", w: 10 },
+  { k: "Diamond", w: 7 },
+  { k: "Rainbow", w: 3 },
+  { k: "Neon", w: 1 },
+  { k: "Galactic", w: 1 },
+  { k: "Thunder", w: 15 },
+  { k: "Blackhole", w: 1 }
+];
+
+function rollMutationMachineKey(){
+  let total = 0;
+  for (const it of MUTATION_MACHINE_TABLE) total += Number(it.w)||0;
+  let r = Math.random() * (total || 1);
+  for (const it of MUTATION_MACHINE_TABLE){
+    r -= (Number(it.w)||0);
+    if (r <= 0) return it.k;
+  }
+  return "Normal";
+}
+
+function mutationMachineEligibleCards(){
+  // Eligible rules (Mutation Machine):
+  // - Only cards in inventory (avoid deck disruption)
+  // - Only UNHEARTED cards (not locked/favorited)
+  // - Only cards with NO mutation OR EXACTLY ONE mutation
+  //   (stacked/multiple mutations are not allowed for this process)
+  const usedInDeck = getUsedDeckCardIdSet(); // deck cards are still in cardsOwned, so filter by location
+  const list = (state.cardsOwned||[]).filter(c=>{
+    if (!c || !c.id) return false;
+    if (String(c.location||"inventory") !== "inventory") return false;
+    if (usedInDeck.has(c.id)) return false;
+
+    // "hearted" == locked/favorited in this codebase (fav = true)
+    if (c.fav === true) return false;
+
+    const muts = getMutationList(c);
+    return (muts.length === 0 || muts.length === 1);
+  });
+
+  // Sort by rarity desc then gps desc for better UX
+  const rRank = (rk)=> invOrder.indexOf(String(rk||"common").toLowerCase());
+  list.sort((a,b)=>{
+    const ra = rRank(a.rarity), rb = rRank(b.rarity);
+    if (ra !== rb) return ra - rb; // invOrder is rare->common
+    return (Number(b.gps)||0) - (Number(a.gps)||0);
+  });
+  return list;
+}
+
+function rollMutationMachineKeyAvoid(excludeKey){
+  // Avoid rolling the same mutation as the existing one when replacing
+  const ex = normMutKey(excludeKey);
+  for (let i=0;i<8;i++){
+    const mk = rollMutationMachineKey();
+    if (normMutKey(mk) !== ex) return mk;
+  }
+  return rollMutationMachineKey();
+}
+
+
+function openMmSelectModal(){
+  if (!mmSelectOverlay) return;
+  mmPicking = { selectedCardId: null };
+  mmSelectOverlay.classList.add("show");
+  mmSelectOverlay.setAttribute("aria-hidden","false");
+  renderMmPickGrid();
+  setMmDetails(null);
+  if (mmSelectBtn) mmSelectBtn.disabled = true;
+}
+function closeMmSelectModal(){
+  if (!mmSelectOverlay) return;
+  mmSelectOverlay.classList.remove("show");
+  mmSelectOverlay.setAttribute("aria-hidden","true");
+  mmPicking = null;
+}
+
+function setMmDetails(card){
+  if (!mmDetailsImg) return;
+  if (!card){
+    mmDetailsImg.src = "card.png";
+    mmDetailsName.textContent = "—";
+    mmDetailsRarity.textContent = "—";
+    mmDetailsChance.textContent = "—";
+    mmDetailsMutation.textContent = "—";
+    mmDetailsGps.textContent = "—";
+    return;
+  }
+  mmDetailsImg.src = card.img || "card.png";
+  mmDetailsName.textContent = card.name || "Unknown";
+  mmDetailsRarity.textContent = (card.rarity || "common").toUpperCase();
+  mmDetailsChance.textContent = `${Number(card.pullChance ?? card.w ?? 0)}%`;
+  mmDetailsMutation.textContent = mutationLabel(card);
+  mmDetailsGps.textContent = `${Number(card.gps)||0} / sec`;
+}
+
+function renderMmPickGrid(){
+  if (!mmPickGrid) return;
+  mmPickGrid.innerHTML = "";
+  const pool = mutationMachineEligibleCards();
+  if (!pool.length){
+    if (mmPickEmpty) mmPickEmpty.style.display = "";
+    return;
+  }
+  if (mmPickEmpty) mmPickEmpty.style.display = "none";
+
+  pool.forEach(c=>{
+    const item = document.createElement("div");
+    item.className = "deckPickItem";
+    item.dataset.id = c.id;
+
+    applyMutationGlow(item, c);
+
+    const img = document.createElement("img");
+    img.src = c.img || "card.png";
+    img.onerror = ()=>{ img.src = "card.png"; };
+
+    const meta = document.createElement("div");
+    meta.className = "deckPickMeta";
+
+    const name = document.createElement("div");
+    name.className = "deckPickName";
+    name.textContent = c.name || "Unknown";
+
+    const tag = document.createElement("div");
+    tag.className = "deckPickTag";
+    tag.textContent = (c.rarity || "common").toUpperCase();
+
+    meta.appendChild(name);
+    meta.appendChild(tag);
+
+    item.appendChild(img);
+    item.appendChild(meta);
+
+    bindTooltip(item, ()=>c);
+
+    item.addEventListener("click", ()=>{
+      mmPickGrid.querySelectorAll(".deckPickItem.sel").forEach(n=>n.classList.remove("sel"));
+      item.classList.add("sel");
+      if (mmPicking) mmPicking.selectedCardId = c.id;
+      if (mmSelectBtn) mmSelectBtn.disabled = false;
+      setMmDetails(c);
+    });
+
+    mmPickGrid.appendChild(item);
+  });
+
+  setMmDetails(null);
+}
+
+function openMmResultModal(card){
+  if (!mmResultOverlay) return;
+  ensureNotifications();
+  const mm = state.notifications.mutationMachine;
+
+  // Always show the card name/art (front image will be revealed on flip)
+  const target = card || getCardById(mm.cardId);
+  if (!target){
+    toast("Mutation Machine", "Card not found.");
+    return;
+  }
+
+  mmResultName.textContent = target?.name || "Mutated Card";
+  mmResultImg.src = target?.img || "card.png";
+  mmResultImg.onerror = ()=>{ mmResultImg.src = "card.png"; };
+
+  // Hide the result text until reveal
+  mmResultMeta.textContent = "Revealing...";
+
+  // Reset flip state (back face shows card.png via HTML)
+  const flip = document.getElementById("mmFlipCard");
+  if (flip) flip.classList.remove("revealed");
+
+  // Ensure glow is cleared until reveal
+  if (mmResultImgWrap){
+    mmResultImgWrap.className = "luckyResultImgWrap";
+  }
+
+  // Hover for full details (shows CURRENT details; mutation will update after reveal)
+  if (mmResultImgWrap) bindTooltip(mmResultImgWrap, ()=>target);
+
+  mmResultOverlay.classList.add("show");
+  mmResultOverlay.setAttribute("aria-hidden","false");
+
+  // If the machine isn't done, don't reveal yet
+  if (mm.status !== "done" || !mm.resultMutation){
+    mmResultMeta.textContent = "Machine is not finished yet.";
+    return;
+  }
+
+  // If already revealed before, just show final state (no re-flip)
+  if (mm.revealed){
+    const muts = getMutationList(target).map(normMutKey);
+    const mainMut = muts.length ? muts[0] : "normal";
+    const pretty = (mainMut === "normal") ? "Normal (No Mutation)" : (mainMut[0].toUpperCase()+mainMut.slice(1));
+    mmResultMeta.textContent = `Mutation: ${pretty}`;
+    if (mmResultImgWrap) applyMutationGlow(mmResultImgWrap, target);
+    if (flip) flip.classList.add("revealed");
+    return;
+  }
+
+  // Reveal moment: play sound + flip, then APPLY mutation to the card
+  const REVEAL_DELAY_MS = 900; // charge-up timing
+  window.setTimeout(() => {
+    // 🔊 reveal SFX
+    try{ playCardOpeningSFX(); }catch(_){}
+
+    // Flip animation start
+    if (flip) flip.classList.add("revealed");
+
+    // Apply mutation now (replace only — no stacking)
+    const mk = mm.resultMutation;
+    clearAllMutations(target);
+    if (normMutKey(mk) !== "normal"){
+      applyMutationToCard(target, mk);
+    }else{
+      clearAllMutations(target);
+      recomputeCardStats(target);
+    }
+
+    mm.revealed = true;
+    saveState();
+    syncUI();
+
+    // Update modal meta + glow after apply
+    const muts = getMutationList(target).map(normMutKey);
+    const mainMut = muts.length ? muts[0] : "normal";
+    const pretty = (mainMut === "normal") ? "Normal (No Mutation)" : (mainMut[0].toUpperCase()+mainMut.slice(1));
+    mmResultMeta.textContent = `Mutation: ${pretty}`;
+
+    if (mmResultImgWrap){
+      mmResultImgWrap.className = "luckyResultImgWrap";
+      applyMutationGlow(mmResultImgWrap, target);
+    }
+  }, REVEAL_DELAY_MS);
+}
+
+function closeMmResultModal(){
+  if (!mmResultOverlay) return;
+  mmResultOverlay.classList.remove("show");
+  mmResultOverlay.setAttribute("aria-hidden","true");
+}
+
+function canPayMutationCost(option){
+  if (option === "gold"){
+    return state.gold >= 5000000;
+  }
+  return true;
+}
+
+function sacrificeRarestCards(rarityKey, count, excludeId){
+  // "Rarest" interpreted as highest GPS within that rarity
+  const key = String(rarityKey||"").toLowerCase();
+  const pool = (state.cardsOwned||[]).filter(c=>{
+    if (!c || !c.id) return false;
+    if (c.id === excludeId) return false;
+    if (String(c.location||"inventory") !== "inventory") return false;
+    return String(c.rarity||"").toLowerCase() === key;
+  });
+  pool.sort((a,b)=> (Number(b.gps)||0) - (Number(a.gps)||0));
+  if (pool.length < count) return false;
+  for (let i=0;i<count;i++){
+    removeCardEverywhere(pool[i].id);
+  }
+  return true;
+}
+
+function startMutationMachine(option){
+  ensureNotifications();
+  const mm = state.notifications.mutationMachine;
+
+  if (!mm.cardId){
+    toast("Mutation Machine", "Select a card first.");
+    return;
+  }
+  const card = getCardById(mm.cardId);
+  if (!card){
+    mm.cardId = null;
+    mm.status = "idle";
+    saveState();
+    renderNotifTab();
+    toast("Mutation Machine", "Selected card is missing.");
+    return;
+  }
+
+  // Card eligibility rules
+  // - must be in inventory (extra safety)
+  if (String(card.location||"inventory") !== "inventory"){
+    toast("Mutation Machine", "That card is not in your inventory.");
+    return;
+  }
+  // - must be unhearted / not favorited
+  if (card.fav === true){
+    toast("Mutation Machine", "This card is locked (hearted). Unheart it to use the Mutation Machine.");
+    return;
+  }
+  // - must have 0 or 1 mutation (no stacked mutations allowed)
+  const muts = getMutationList(card);
+  if (muts.length > 1){
+    toast("Mutation Machine", "This card has stacked mutations and is not eligible.");
+    return;
+  }
+
+  option = String(option || mm.speedOption || "wait");
+  mm.speedOption = option;
+
+  // Pay / sacrifice
+  if (option === "gold"){
+    if (state.gold < 5000000){
+      toast("Not enough gold", `You need ${fmt(5000000)} gold.`);
+      return;
+    }
+    state.gold -= 5000000;
+  }else if (option === "legendary"){
+    const ok = sacrificeRarestCards("legendary", 5, mm.cardId);
+    if (!ok){
+      toast("Sacrifice failed", "You need 5 Legendary cards in your inventory (not in decks).");
+      return;
+    }
+  }else if (option === "cosmic"){
+    const ok = sacrificeRarestCards("cosmic", 3, mm.cardId);
+    if (!ok){
+      toast("Sacrifice failed", "You need 3 Cosmic cards in your inventory (not in decks).");
+      return;
+    }
+  }else if (option === "interstellar"){
+    const ok = sacrificeRarestCards("interstellar", 1, mm.cardId);
+    if (!ok){
+      toast("Sacrifice failed", "You need 1 Interstellar card in your inventory (not in decks).");
+      return;
+    }
+  }
+
+  const now = Date.now();
+  mm.startAt = now;
+  mm.endAt = (option === "wait") ? (now + MUTATION_MACHINE_DURATION_MS) : now; // speed-up finishes immediately
+  mm.status = "running";
+  mm.resultMutation = null;
+  mm.revealed = false; // reveal happens only when opening result
+  mm.doneNotified = false;
+
+  saveState();
+  syncUI();
+  renderNotifTab();
+}
+
+
+function completeMutationMachineIfNeeded(){
+  ensureNotifications();
+  const mm = state.notifications.mutationMachine;
+  if (mm.status !== "running") return;
+
+  const now = Date.now();
+  if (now < mm.endAt) return;
+
+  const card = getCardById(mm.cardId);
+  if (!card){
+    mm.status = "idle";
+    mm.cardId = null;
+    mm.resultMutation = null;
+    saveState();
+    return;
+  }
+
+  // Decide mutation once, at completion (STORE ONLY — do not apply yet)
+  if (!mm.resultMutation){
+    const current = getMutationList(card);
+    const currentKey = current.length ? current[0] : "Normal";
+    const mk = rollMutationMachineKeyAvoid(currentKey);
+
+    mm.resultMutation = mk;
+    mm.revealed = false;
+  }
+
+  // Mark as done; mutation will be revealed/applied when player opens the machine
+  mm.status = "done";
+
+  if (!mm.doneNotified){
+    mm.doneNotified = true;
+    toast("Mutation Machine", "Mutation is done!");
+  }
+
+  saveState();
+  syncUI();
+}
+
+
+function resetMutationMachine(){
+  ensureNotifications();
+  const mm = state.notifications.mutationMachine;
+  mm.cardId = null;
+  mm.startAt = 0;
+  mm.endAt = 0;
+  mm.status = "idle";
+  mm.speedOption = "wait";
+  mm.resultMutation = null;
+  mm.revealed = false; // reveal happens only when opening result
+  mm.doneNotified = false;
+  saveState();
+}
+
+function renderMutationMachinePanel(){
+  ensureNotifications();
+  const mm = state.notifications.mutationMachine;
+
+  const h = document.createElement("h3");
+  h.textContent = "Mutation Machine";
+  notifContent.appendChild(h);
+
+  const sub = document.createElement("div");
+  sub.className = "small muted";
+  sub.textContent = "Insert 1 card, then start the mutation process. Come back to open your result.";
+  notifContent.appendChild(sub);
+
+  const wrap = document.createElement("div");
+  wrap.className = "mmMachine";
+
+  const slotRow = document.createElement("div");
+  slotRow.className = "mmSlotRow";
+
+  const slot = document.createElement("div");
+  slot.className = "mmSlot";
+  slot.type = "button";
+
+  const card = mm.cardId ? getCardById(mm.cardId) : null;
+  slot.innerHTML = "";
+  if (card){
+    const img = document.createElement("img");
+    img.className = "mmSlotImg";
+    img.src = card.img || "card.png";
+    img.onerror = ()=>{ img.src = "card.png"; };
+    slot.appendChild(img);
+    applyMutationGlow(slot, card);
+    bindTooltip(slot, ()=>card);
+  }else{
+    const empty = document.createElement("div");
+    empty.className = "mmSlotEmpty";
+    empty.innerHTML = `<div class="plus">+</div><div><b>Insert Card</b><div class="small muted" style="margin-top:4px;">Tap to choose</div></div>`;
+    slot.appendChild(empty);
+  }
+
+  slot.addEventListener("click", ()=>{
+    if (mm.status === "running") return;
+    openMmSelectModal();
+  });
+
+  const meta = document.createElement("div");
+  meta.className = "mmSlotMeta";
+
+  const stats = document.createElement("div");
+  stats.className = "mmStatGrid";
+
+  const stat = (k,v)=>{
+    const d = document.createElement("div");
+    d.className = "mmStat";
+    d.innerHTML = `<div class="k">${k}</div><div class="v">${v}</div>`;
+    return d;
+  };
+
+  stats.appendChild(stat("Selected", card ? (card.name||"Unknown") : "—"));
+  stats.appendChild(stat("Rarity", card ? (String(card.rarity||"common").toUpperCase()) : "—"));
+  stats.appendChild(stat("Current Mutation", card ? mutationLabel(card) : "—"));
+  stats.appendChild(stat("Base Time", "25:00"));
+
+  meta.appendChild(stats);
+
+  slotRow.appendChild(slot);
+  slotRow.appendChild(meta);
+  wrap.appendChild(slotRow);
+
+  // Progress
+  const prog = document.createElement("div");
+  prog.className = "mmProgress";
+
+  const bar = document.createElement("div");
+  bar.className = "mmProgressBar";
+  const fill = document.createElement("div");
+  fill.className = "mmProgressFill";
+  bar.appendChild(fill);
+  prog.appendChild(bar);
+
+  const txt = document.createElement("div");
+  txt.className = "mmProgressText";
+
+  const now = Date.now();
+  let pct = 0;
+  let left = MUTATION_MACHINE_DURATION_MS;
+  if (mm.status === "running"){
+    const total = Math.max(1, mm.endAt - mm.startAt);
+    pct = clamp((now - mm.startAt) / total, 0, 1);
+    left = Math.max(0, mm.endAt - now);
+  }else if (mm.status === "done"){
+    pct = 1;
+    left = 0;
+  }else{
+    pct = 0;
+    left = MUTATION_MACHINE_DURATION_MS;
+  }
+
+  fill.style.width = `${Math.round(pct*100)}%`;
+
+  const leftTxt = document.createElement("div");
+  leftTxt.innerHTML = `<b>Status</b> <span class="muted">${mm.status.toUpperCase()}</span>`;
+  const rightTxt = document.createElement("div");
+  rightTxt.innerHTML = (mm.status === "running")
+    ? `<b>Remaining</b> <span class="muted">${mmss(left)}</span>`
+    : (mm.status === "done")
+      ? `<b>Ready</b> <span class="muted">Open result</span>`
+      : `<b>Duration</b> <span class="muted">25:00</span>`;
+
+  txt.appendChild(leftTxt);
+  txt.appendChild(rightTxt);
+
+  prog.appendChild(txt);
+  wrap.appendChild(prog);
+
+  // Controls
+  const controls = document.createElement("div");
+  controls.className = "mmControls";
+
+  const group = document.createElement("div");
+  group.className = "mmRadioGroup";
+
+  const options = [
+    { v:"wait",        title:"Wait",        sub:"25 minutes (Free)" },
+    { v:"gold",        title:"Gold",        sub:"Pay 5,000,000 gold (Instant)" },
+    { v:"legendary",   title:"Legendary",   sub:"Sacrifice 5 rarest Legendary (Instant)" },
+    { v:"cosmic",      title:"Cosmic",      sub:"Sacrifice 3 rarest Cosmic (Instant)" },
+    { v:"interstellar",title:"Interstellar",sub:"Sacrifice 1 rarest Interstellar (Instant)" },
+  ];
+
+  const currentOpt = String(mm.speedOption || "wait");
+
+  options.forEach((op, idx)=>{
+    const label = document.createElement("label");
+    label.className = "mmRadioOpt";
+
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "mmSpeedOption";
+    input.value = op.v;
+    input.checked = (op.v === currentOpt);
+    input.disabled = (mm.status !== "idle");
+    input.addEventListener("change", ()=>{
+      if (!input.checked) return;
+      ensureNotifications();
+      state.notifications.mutationMachine.speedOption = op.v;
+      saveState();
+    });
+
+    const box = document.createElement("div");
+    box.className = "mmRadioBox";
+    box.innerHTML = `<div class="t">${op.title}</div><div class="s">${op.sub}</div>`;
+
+    label.appendChild(input);
+    label.appendChild(box);
+    group.appendChild(label);
+  });
+
+  const btn = document.createElement("button");
+  btn.className = "mmStartBtn";
+  btn.type = "button";
+
+  if (mm.status === "done"){
+    btn.textContent = "Open Result";
+    btn.disabled = !mm.cardId;
+    btn.addEventListener("click", ()=>{
+      const c = mm.cardId ? getCardById(mm.cardId) : null;
+      if (!c) return;
+      openMmResultModal(c);
+    });
+  }else{
+    btn.textContent = "Start";
+    btn.disabled = (!mm.cardId || mm.status !== "idle");
+    btn.addEventListener("click", ()=>{
+      const selected = (group.querySelector("input[type='radio']:checked")?.value) || (mm.speedOption||"wait");
+      startMutationMachine(selected);
+    });
+  }
+
+  controls.appendChild(group);
+  controls.appendChild(btn);
+
+
+  wrap.appendChild(controls);
+
+  // Hint text
+  const hint = document.createElement("div");
+  hint.className = "small muted";
+  hint.style.marginTop = "6px";
+  hint.textContent = "Eligible cards: Unhearted (not locked), and either no mutation or exactly one mutation. The Mutation Machine replaces the card\'s current mutation with a new random one (no stacking).";
+  wrap.appendChild(hint);
+
+  notifContent.appendChild(wrap);
+}
+
+function tickMutationMachine(){
+  completeMutationMachineIfNeeded();
+
+  // Live progress updates when Notifications > Mutation Machine is open
+  if (notifOverlay && notifOverlay.classList.contains("show") && notifActiveTab === "mutation"){
+    // re-render occasionally for accurate progress bar
+    if (!tickMutationMachine._lastRender) tickMutationMachine._lastRender = 0;
+    const now = Date.now();
+    if (now - tickMutationMachine._lastRender > 750){
+      tickMutationMachine._lastRender = now;
+      renderNotifTab();
+    }
+  }
 }
 
 function rollMutationKey(){
@@ -3068,7 +3793,7 @@ function updateWeatherTooltip(){
       <b>${escapeHtml(def.name)}</b>
       <span class="wtPill">${escapeHtml(pill)}</span>
     </div>
-    <div class="wtLine"><b>Roll chances:</b> Normal 60% • Space Storm 10% • Anti-Gravity 5% • Ascension 3% • Multiverse 1%</div>
+    <div class="wtLine"><b>Roll chances:</b> Normal 60% • Space Storm 40% • Anti-Gravity 25% • Ascension 15% • Multiverse 5%</div>
     ${details}
   `;
 }
@@ -3083,6 +3808,30 @@ function showWeatherTicker(text){
     if (weatherTicker) weatherTicker.style.display = "none";
   }, 4200);
 }
+
+
+function triggerWeatherStrikeFX(cardId, weatherKey){
+  if (!cardId) return;
+  const wk = String(weatherKey||"").toLowerCase();
+  const cls = `wx-${wk}`;
+
+  const els = document.querySelectorAll(`.slot.assigned[data-card-id="${CSS.escape(String(cardId))}"]`);
+  if (!els || !els.length) return;
+
+  els.forEach(el=>{
+    el.classList.remove("wxStrike","wx-spacestorm","wx-antigravity","wx-ascension","wx-multiverse");
+    // Restart animation reliably
+    void el.offsetWidth;
+    el.classList.add("wxStrike");
+    if (wk && wk !== "normal") el.classList.add(cls);
+  });
+
+  // Auto-clean
+  setTimeout(()=>{
+    els.forEach(el=> el.classList.remove("wxStrike", cls));
+  }, 980);
+}
+
 
 function applyMutationToCard(card, mutationKey){
   if (!card) return false;
@@ -3141,6 +3890,9 @@ function weatherStrikeAttempt(){
   if (!card) return;
 
   const applied = applyMutationToCard(card, def.mutation);
+  // Visible premium strike FX on the affected card(s)
+  triggerWeatherStrikeFX(id, def.key);
+
   if (applied){
     toast(def.name, `${card.name} was struck! +${def.mutation} (×${def.mult})`);
     saveState();
@@ -3162,6 +3914,13 @@ function startWeatherEvent(key){
   state.weather.nextStrikeAt = now; // immediate first attempt
   state.weather.nextAnnounceAt = 0;
   saveState();
+
+  const def = getWeatherDef(key);
+  if (def.special){
+    // Notification when a special event starts
+    toast("Weather Event Started", `${def.icon||"✨"} ${def.name} • strikes every 10s for 01:30`);
+    showWeatherTicker(`${def.icon||"✨"} ${def.name} started!`);
+  }
 
   setWeatherIconUI(key);
   updateWeatherUI(true);
@@ -3464,13 +4223,13 @@ function renderSummonersList(){
       const mult = towerMultiplierForTier(tier);
       const cap = towerCapForTier(tier);
       const petLimit = petLimitForTier(tier);
-      const bonus15 = bonusGoldPer15sForTier(tier);
+      const bonus15 = bonusGoldPer30sForTier(tier);
 
       const html = `
         <div class="ttName">${escapeHtml(s.name)}</div>
         <div class="ttRow"><span class="ttBadge">SUMMONER</span>${isActive ? `<span class="ttBadge">IN USE</span>` : ``}</div>
         <div class="ttRow" style="opacity:.82">${escapeHtml(s.desc || "")}</div>
-        ${isActive ? `<div class="ttRow">Tier ${tier} • ${bonus15>0?`+${fmt(bonus15)}/15s`:"No bonus"} • Pets ${petLimit} • Tower ${mult.toFixed(1)}x (cap ${fmt(cap)})</div>` : ``}
+        ${isActive ? `<div class="ttRow">Tier ${tier} • ${bonus15>0?`+${fmt(bonus15)}/ 30s`:"No bonus"} • Pets ${petLimit} • Tower ${mult.toFixed(1)}x (cap ${fmt(cap)})</div>` : ``}
       `;
       showTooltipHtml(html, e.clientX, e.clientY);
     });
@@ -3486,12 +4245,12 @@ function renderSummonersList(){
       const mult = towerMultiplierForTier(tier);
       const cap = towerCapForTier(tier);
       const petLimit = petLimitForTier(tier);
-      const bonus15 = bonusGoldPer15sForTier(tier);
+      const bonus15 = bonusGoldPer30sForTier(tier);
       return `
         <div class="ttName">${escapeHtml(s.name)}</div>
         <div class="ttRow"><span class="ttBadge">SUMMONER</span>${isActive ? `<span class="ttBadge">IN USE</span>` : ``}</div>
         <div class="ttRow" style="opacity:.82">${escapeHtml(s.desc || "")}</div>
-        ${isActive ? `<div class="ttRow">Tier ${tier} • ${bonus15>0?`+${fmt(bonus15)}/15s`:"No bonus"} • Pets ${petLimit} • Tower ${mult.toFixed(1)}x (cap ${fmt(cap)})</div>` : ``}
+        ${isActive ? `<div class="ttRow">Tier ${tier} • ${bonus15>0?`+${fmt(bonus15)}/ 30s`:"No bonus"} • Pets ${petLimit} • Tower ${mult.toFixed(1)}x (cap ${fmt(cap)})</div>` : ``}
       `;
     });
 
@@ -3529,7 +4288,7 @@ function renderSummonerDetails(id){
   const mult = towerMultiplierForTier(tier);
   const cap = towerCapForTier(tier);
   const petLimit = petLimitForTier(tier);
-  const bonus15 = bonusGoldPer15sForTier(tier);
+  const bonus15 = bonusGoldPer30sForTier(tier);
 
   if(selectedSummonerName) selectedSummonerName.textContent = s.name;
   if(summonerDetailName) summonerDetailName.textContent = s.name;
@@ -3538,7 +4297,7 @@ function renderSummonerDetails(id){
   if(summonerDetailText){
     const lines = [];
     lines.push(s.desc || "");
-    lines.push(bonus15 > 0 ? `Bonus: +${fmt(bonus15)} gold every 15s.` : "No bonus gold.");
+    lines.push(bonus15 > 0 ? `Bonus: +${fmt(bonus15)} gold every 30s.` : "No bonus gold.");
     if (activeId === "3dm4rk"){
       lines.push("Deck: Only Deck A (Slots 1–3). Other slots and Deck B are locked.");
     } else {
@@ -3550,7 +4309,7 @@ function renderSummonerDetails(id){
   }
 
   if(summonerBonusText){
-    summonerBonusText.textContent = bonus15 <= 0 ? "None" : `+${fmt(bonus15)} / 15s`;
+    summonerBonusText.textContent = bonus15 <= 0 ? "None" : `+${fmt(bonus15)} / 30s`;
   }
   if(summonerUpgradeCost){
     summonerUpgradeCost.textContent = (cost === Infinity) ? "MAX" : fmt(cost);
@@ -3689,17 +4448,17 @@ function tickSummonerBonus(){
 
   let changed = false;
 
-  // --- Fixed 15s bonus (normal summoners) ---
-  const bonus15 = bonusGoldPer15sForTier(tier);
-  if (!Number.isFinite(state.summoners.nextBonusAt)) state.summoners.nextBonusAt = now + 15000;
+  // --- Fixed 30s bonus (normal summoners) ---
+  const bonus15 = bonusGoldPer30sForTier(tier);
+  if (!Number.isFinite(state.summoners.nextBonusAt)) state.summoners.nextBonusAt = now + 30000;
 
   if (bonus15 > 0 && now >= state.summoners.nextBonusAt){
     // catch up (avoid huge loops)
-    const missed = Math.min(10, Math.floor((now - state.summoners.nextBonusAt) / 15000) + 1);
+    const missed = Math.min(10, Math.floor((now - state.summoners.nextBonusAt) / 30000) + 1);
     const gain = bonus15 * missed;
 
     state.gold += gain;
-    state.summoners.nextBonusAt += missed * 15000;
+    state.summoners.nextBonusAt += missed * 30000;
     changed = true;
 
 
@@ -3884,9 +4643,28 @@ invOkBtn.addEventListener("click", closeInventory);
 closeInvBtn.addEventListener("click", closeInventory);
 invOverlay.addEventListener("click", (e)=>{ if(e.target === invOverlay) closeInventory(); });
 
-openCardsBtn.addEventListener("click", openCards);
+// Inventory tab switching (Packs / Cards / Pets)
+// Fix: previously there was no click handler on #invTabs, so pressing the Cards tab
+// would not render anything on the right panel.
+if (invTabs){
+  invTabs.addEventListener("click", (e)=>{
+    const btn = e.target.closest(".invTab");
+    if (!btn) return;
+    const tab = btn.getAttribute("data-tab");
+    if (!tab) return;
+
+    setInventoryTab(tab);
+
+    // Persist chosen tab immediately so reopening Inventory keeps the same tab
+    if (!state.ui || typeof state.ui !== "object") state.ui = {};
+    state.ui.invTab = tab;
+    try{ saveState(state); }catch(_){ try{ saveState(); }catch(__){} }
+  });
+}
+
+if (openCardsBtn){ openCardsBtn.addEventListener("click", openCards); }
 if (cardsSearchInput){ cardsSearchInput.addEventListener("input", renderCardsModal); }
-cardsOkBtn.addEventListener("click", closeCards);
+if (cardsOkBtn){ cardsOkBtn.addEventListener("click", closeCards); }
 
 
 // Notifications
@@ -3960,8 +4738,8 @@ if (sellAllCardsBtn){
   });
 }
 
-closeCardsBtn.addEventListener("click", closeCards);
-cardsOverlay.addEventListener("click", (e)=>{ if(e.target === cardsOverlay) closeCards(); });
+if (closeCardsBtn){ closeCardsBtn.addEventListener("click", closeCards); }
+if (cardsOverlay){ cardsOverlay.addEventListener("click", (e)=>{ if(e.target === cardsOverlay) closeCards(); }); }
 
 if (closeDeckBtn){
   closeDeckBtn.addEventListener("click", closeDeckPicker);
@@ -4001,6 +4779,40 @@ if (deckSelectBtn){
   });
 }
 
+
+/* Mutation Machine modals */
+if (closeMmSelectBtn) closeMmSelectBtn.addEventListener("click", closeMmSelectModal);
+if (mmSelectOverlay) mmSelectOverlay.addEventListener("click", (e)=>{ if (e.target === mmSelectOverlay) closeMmSelectModal(); });
+if (mmSelectBtn){
+  mmSelectBtn.addEventListener("click", ()=>{
+    if (!mmPicking || !mmPicking.selectedCardId) return;
+    ensureNotifications();
+    state.notifications.mutationMachine.cardId = mmPicking.selectedCardId;
+    state.notifications.mutationMachine.status = "idle";
+    state.notifications.mutationMachine.startAt = 0;
+    state.notifications.mutationMachine.endAt = 0;
+    state.notifications.mutationMachine.resultMutation = null;
+    state.notifications.mutationMachine.doneNotified = false;
+    saveState();
+    closeMmSelectModal();
+    if (notifOverlay && notifOverlay.classList.contains("show") && notifActiveTab === "mutation"){
+      renderNotifTab();
+    }
+  });
+}
+
+if (closeMmResultBtn) closeMmResultBtn.addEventListener("click", closeMmResultModal);
+if (mmResultOkBtn){
+  mmResultOkBtn.addEventListener("click", ()=>{
+    closeMmResultModal();
+    // After viewing result, return to Mutation Machine UI and reset machine state
+    resetMutationMachine();
+    if (notifOverlay && notifOverlay.classList.contains("show") && notifActiveTab === "mutation"){
+      renderNotifTab();
+    }
+  });
+}
+if (mmResultOverlay) mmResultOverlay.addEventListener("click", (e)=>{ if (e.target === mmResultOverlay) closeMmResultModal(); });
 
 rewardsOkBtn.addEventListener("click", closeRewards);
 closeRewardsBtn.addEventListener("click", closeRewards);
@@ -4042,7 +4854,7 @@ function boot(){
   updatePetsBadge();
   initGoldPlaceholder();
   let _towersSaveCtr = 0;
-  setInterval(()=>{ tickTowers(); tickSummonerBonus(); tickWeather(); updateTowersUI(); updateWeatherUI(); if((++_towersSaveCtr % 40)===0) saveState(); }, 250);
+  setInterval(()=>{ tickTowers(); tickSummonerBonus(); tickWeather(); tickMutationMachine(); updateTowersUI(); updateWeatherUI(); if((++_towersSaveCtr % 40)===0) saveState(); }, 250);
 
 
   const cardW = 210, gap = 22;

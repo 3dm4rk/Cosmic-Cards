@@ -35,15 +35,7 @@
         <span>Inventory</span>
         <span class="invBadge" id="invBadge">0</span>
       </button>
-
-      <button class="invBtn" id="openCardsBtn" type="button" aria-haspopup="dialog" aria-controls="cardsOverlay">
-        <span class="invIcon" aria-hidden="true"></span>
-        <span>Cards</span>
-        <span class="invBadge" id="cardsBadge">0</span>
-      </button>
-
-
-      <div class="weatherWrap" id="weatherWrap" aria-label="Weather System">
+<div class="weatherWrap" id="weatherWrap" aria-label="Weather System">
         <div class="weatherChip" id="weatherChip" tabindex="0" role="button" aria-haspopup="true" aria-label="Weather status">
           <div class="weatherIconBox weather-normal" id="weatherIconBox">
             <span class="weatherIcon" id="weatherIcon" aria-hidden="true">☀</span>
@@ -188,6 +180,10 @@
             <span>Packs</span>
             <span class="pill invTabBadge" id="invPacksBadge" style="display:none;">0</span>
           </button>
+          <button class="invTab" data-tab="cards" type="button">
+            <span>Cards</span>
+            <span class="pill invTabBadge" id="invCardsBadge" style="display:none;">0</span>
+          </button>
           <button class="invTab" data-tab="pets" type="button">
             <span>Pets</span>
             <span class="pill invTabBadge" id="invPetsBadge" style="display:none;">0</span>
@@ -210,6 +206,30 @@
           <div class="invPanelSection" id="invPanelPets" style="display:none;">
             <div class="petsGrid" id="invPetsGrid"></div>
             <p class="small" id="invPetsEmpty" style="display:none;margin-top:12px;">You don’t own any pets yet.</p>
+          </div>
+
+          <!-- Cards -->
+          <div class="invPanelSection" id="invPanelCards" style="display:none;">
+            <div class="cardsHeaderRow">
+              <div>
+                <b class="cardsTitle">Your Cards</b>
+                <div class="small muted">Manage your collection, search, and protect favorites.</div>
+              </div>
+              <button class="btn btnGhost" id="sellAllCardsBtn" type="button" title="Sell all cards in your collection">Sell All</button>
+            </div>
+
+            <div class="cardsTools">
+              <input id="cardsSearchInput" class="cardsSearch" type="text" placeholder="Search cards..." />
+              <div class="cardsCounts">
+                <span class="small">Total: <b id="cardsTotalCount">0</b></span>
+                <span class="small">Hearted Cards: <b id="cardsHeartedCount">0</b></span>
+              </div>
+            </div>
+
+            <div class="cardsGrid" id="cardsGrid"></div>
+            <p class="small" id="cardsEmpty" style="display:none;margin-top:12px;">You don’t own any cards yet.</p>
+          </div>
+
           </div>
         </div>
       </div>
@@ -259,7 +279,7 @@
             <span class="pill notifTabBadge" id="notifRewardsBadge" style="display:none;">0</span>
           </button>
           <button class="notifTab" data-tab="lucky" type="button">Lucky Draw Gacha</button>
-          <button class="notifTab" data-tab="mutation" type="button">Mutation Machine <span class="muted">(Coming Soon)</span></button>
+          <button class="notifTab" data-tab="mutation" type="button">Mutation Machine</button>
           <button class="notifTab" data-tab="trade" type="button">Trade <span class="muted">(Coming Soon)</span></button>
           <button class="notifTab" data-tab="settings" type="button">Settings <span class="muted">(Coming Soon)</span></button>
         </div>
@@ -271,6 +291,74 @@
 
       <div class="okRow">
         <button class="btn btnPrimary" id="notifOkBtn" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Mutation Machine: Card Select Modal -->
+<div class="modalOverlay" id="mmSelectOverlay" aria-hidden="true">
+  <div class="modal deckModal mmSelectModal" id="mmSelectModal" role="dialog" aria-modal="true" aria-labelledby="mmSelectTitle">
+    <div class="modalHead">
+      <b id="mmSelectTitle">Select a Card</b>
+      <button class="closeBtn" id="closeMmSelectBtn" type="button">Close</button>
+    </div>
+
+    <div class="modalBody deckBody">
+      <div class="deckPickLeft">
+        <div class="deckHint" id="mmSelectHint">Choose 1 card to insert into the Mutation Machine.</div>
+        <div class="deckPickGrid" id="mmPickGrid"></div>
+        <p class="small" id="mmPickEmpty" style="display:none;margin-top:10px;">No eligible cards found.</p>
+      </div>
+
+      <div class="deckPickRight">
+        <div class="deckDetailsTitle">Card Details</div>
+        <div class="deckDetailsCard">
+          <img id="mmDetailsImg" src="card.png" alt="Card preview" />
+          <div class="deckDetailsInfo">
+            <div class="deckDetailsName" id="mmDetailsName">—</div>
+            <div class="deckDetailsLine">Rarity: <span id="mmDetailsRarity">—</span></div>
+            <div class="deckDetailsLine">Pull chance: <span id="mmDetailsChance">—</span></div>
+            <div class="deckDetailsLine">Mutation: <span id="mmDetailsMutation">—</span></div>
+            <div class="deckDetailsLine">Gold/sec: <span id="mmDetailsGps">—</span></div>
+          </div>
+        </div>
+
+        <button class="primaryBtn" id="mmSelectBtn" type="button" disabled>Select</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Mutation Machine: Result Modal -->
+<div class="modalOverlay" id="mmResultOverlay" aria-hidden="true">
+  <div class="modal luckyResultModal mmResultModal" id="mmResultModal" role="dialog" aria-modal="true" aria-labelledby="mmResultTitle">
+    <div class="modalHead">
+      <b id="mmResultTitle">Mutation Result</b>
+      <button class="closeBtn" id="closeMmResultBtn" type="button">Close</button>
+    </div>
+
+    <div class="modalBody luckyResultBody">
+      <div class="luckyResultCard">
+        <div class="luckyResultName" id="mmResultName">—</div>
+        <div class="luckyResultImgWrap" id="mmResultImgWrap">
+          <div class="mmFlipCard energyCharge" id="mmFlipCard">
+            <div class="mmFlipInner">
+              <div class="mmFlipFace mmFlipBack">
+                <img src="card.png" alt="Card back" />
+              </div>
+              <div class="mmFlipFace mmFlipFront">
+                <img id="mmResultImg" src="card.png" alt="Mutated card" />
+                <div class="mmMutationBurst" aria-hidden="true"></div>
+              </div>
+            </div>
+          </div></div>
+        <div class="small muted" id="mmResultMeta">—</div>
+      </div>
+
+      <div class="okRow">
+        <button class="btn btnPrimary" id="mmResultOkBtn" type="button">OK</button>
       </div>
     </div>
   </div>
@@ -299,34 +387,6 @@
     </div>
   </div>
 </div>
-
-<!-- Cards Modal -->
-<div class="modalOverlay" id="cardsOverlay" aria-hidden="true">
-  <div class="modal" id="cardsModal" role="dialog" aria-modal="true" aria-labelledby="cardsTitle">
-    <div class="modalHead">
-      <b id="cardsTitle">Your Cards</b>
-      <button class="btn btnGhost" id="sellAllCardsBtn" type="button" title="Sell all cards in your collection">Sell All</button>
-      <button class="closeBtn" id="closeCardsBtn" type="button">Close</button>
-    </div>
-
-    <div class="modalBody cardsBody">
-    <div class="cardsTools">
-      <input id="cardsSearchInput" class="cardsSearch" type="text" placeholder="Search cards..." />
-      <div class="cardsCounts">
-        <span class="small">Total: <b id="cardsTotalCount">0</b></span>
-        <span class="small">Hearted Cards: <b id="cardsHeartedCount">0</b></span>
-      </div>
-    </div>
-
-      <div class="cardsGrid" id="cardsGrid"></div>
-      <p class="small" id="cardsEmpty" style="display:none;margin-top:12px;">You don’t own any cards yet.</p>
-      <div class="okRow">
-        <button class="btn btnPrimary" id="cardsOkBtn" type="button">OK</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 
 <!-- Pet Shop Modal -->
 <div class="modalOverlay" id="petShopOverlay" aria-hidden="true">
