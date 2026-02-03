@@ -6,6 +6,7 @@
 */
 
 const LS_KEY = "gotcha_state_v1";
+const HOWTO_LS_KEY = "cc_howtoplay_seen_v1";
 
 /* ===============================
    SOUND EFFECTS + MUSIC SYSTEM
@@ -442,6 +443,18 @@ const invModalEmpty = document.getElementById("invModalEmpty");
 const invTotalEl = document.getElementById("invTotal");
 const invOkBtn = document.getElementById("invOkBtn");
 const closeInvBtn = document.getElementById("closeInvBtn");
+
+// How to Play (Beginner Guide)
+const openHowToBtn = document.getElementById("openHowToBtn");
+const howtoOverlay = document.getElementById("howtoOverlay");
+const closeHowToBtn = document.getElementById("closeHowToBtn");
+const howtoTabs = document.getElementById("howtoTabs");
+const howtoStepTitle = document.getElementById("howtoStepTitle");
+const howtoDots = document.getElementById("howtoDots");
+const howtoContent = document.getElementById("howtoContent");
+const howtoBackBtn = document.getElementById("howtoBackBtn");
+const howtoNextBtn = document.getElementById("howtoNextBtn");
+const howtoDontShow = document.getElementById("howtoDontShow");
 
 const openCardsBtn = document.getElementById("openCardsBtn");
 const cardsBadge = document.getElementById("cardsBadge");
@@ -3972,15 +3985,16 @@ function showLuckyDrawResult(card){
     // Force correct reward image (prevents "stuck on back card.png")
     if (frontImg) frontImg.src = imgSrc;
 
-    // Apply mutation glow to the stage (edge-hugging glow)
-    if (stage){
-      try{ applyMutationGlow(stage, {...card, img: imgSrc}); }catch(_){}
-    }
+    // Apply mutation glow to the OUTER wrapper so it matches every other mutated card.
+    // (The flip stage itself has no border-radius, so glowing it can look "weird" / boxy.)
+    try{ applyMutationGlow(wrap, {...card, img: imgSrc}); }catch(_){}
 
     // Animate: charge -> flip
     setTimeout(()=>{ stage && stage.classList.add("isReady"); }, 220);
     setTimeout(()=>{
       if (cardEl) cardEl.classList.add("isRevealed");
+      // Stop the scanline once revealed (prevents occasional “glitch line” artifacts)
+      if (stage) stage.classList.remove("isReady");
       // Failsafe: also set the legacy img element in case CSS/DOM differs
       if (luckyResultImg) luckyResultImg.src = imgSrc;
     }, 900);
@@ -4939,6 +4953,183 @@ function renderGallery(q){
 }
 
 
+/* ================= How to Play ================= */
+const HOWTO_STEPS = [
+  {
+    key: "start",
+    icon: "✨",
+    title: "Start here",
+    hint: "What you should do first",
+    html: `
+      <h4>Your goal</h4>
+      <ul>
+        <li>Buy packs in the <b>Main Shop</b>, open them in <b>Inventory</b>, and build strong decks.</li>
+        <li>Your cards generate <b>Gold/sec</b> (GPS). More GPS = faster gold.</li>
+        <li>Use gold to buy better packs, upgrade systems, and flex your best pulls.</li>
+      </ul>
+      <div class="howtoCallout">
+        Tip: On desktop, hover cards to see details. On mobile, <b>long-press</b> the card to show the same info.
+      </div>
+    `
+  },
+  {
+    key: "shop",
+    icon: "🛒",
+    title: "Main Shop",
+    hint: "Buy card packs",
+    html: `
+      <h4>Buying packs</h4>
+      <ul>
+        <li>Click a moving card in the <b>Main Shop</b> to purchase a pack.</li>
+        <li>Packs are stored in your <b>Inventory → Packs</b>.</li>
+        <li>Better rarities are usually harder to pull, but give stronger base GPS.</li>
+      </ul>
+    `
+  },
+  {
+    key: "inventory",
+    icon: "🎒",
+    title: "Inventory",
+    hint: "Open packs & manage cards",
+    html: `
+      <h4>Opening packs</h4>
+      <ul>
+        <li>Open <b>Inventory</b> (top bar) → go to <b>Packs</b> → open your pack to get cards.</li>
+        <li>Your owned cards appear under <b>Inventory → Cards</b>.</li>
+      </ul>
+      <div class="howtoCallout">
+        Some cards can have a <b>mutation</b>. Mutations change your GPS via multipliers.
+      </div>
+    `
+  },
+  {
+    key: "deck",
+    icon: "🧩",
+    title: "Decks",
+    hint: "Equip cards to earn GPS",
+    html: `
+      <h4>Deck A & Deck B</h4>
+      <ul>
+        <li>Click a slot in <b>Deck A</b> or <b>Deck B</b> to place one of your cards.</li>
+        <li>Equipped cards contribute to your total <b>Gold/sec</b>.</li>
+        <li>You can re-pick cards anytime by clicking the slot again.</li>
+      </ul>
+    `
+  },
+  {
+    key: "tower",
+    icon: "🏰",
+    title: "Tower",
+    hint: "Collect stored gold",
+    html: `
+      <h4>Tower storage</h4>
+      <ul>
+        <li>The <b>Tower</b> stores gold for you over time.</li>
+        <li>Click the Tower to collect the stored amount.</li>
+        <li>The % on the Tower shows how full it is.</li>
+      </ul>
+    `
+  },
+  {
+    key: "systems",
+    icon: "⚡",
+    title: "Events & Systems",
+    hint: "Weather, Lucky Draw, Mutations",
+    html: `
+      <h4>Extra ways to progress</h4>
+      <ul>
+        <li><b>Weather</b>: special weather can strike cards with mutations (watch the timer chip).</li>
+        <li><b>Notifications</b>: missions/rewards and special features live here.</li>
+        <li><b>Mutation Machine</b>: insert an eligible card and roll a new random mutation (replacement only, no stacking).</li>
+        <li><b>Lucky Draw</b>: spend tickets for a gacha-style reward.</li>
+      </ul>
+      <div class="howtoCallout">
+        If you ever feel lost, open this guide anytime from <b>How to Play</b> on the top bar.
+      </div>
+    `
+  }
+];
+
+let howtoStepIdx = 0;
+
+function howtoMarkSeen(){
+  try{ localStorage.setItem(HOWTO_LS_KEY, "1"); }catch(_){ }
+}
+
+function howtoIsSeen(){
+  try{ return localStorage.getItem(HOWTO_LS_KEY) === "1"; }catch(_){ return false; }
+}
+
+function openHowToPlay(force=false){
+  if (!howtoOverlay) return;
+  if (!force && howtoIsSeen()) return;
+  howtoOverlay.classList.add("show");
+  howtoOverlay.setAttribute("aria-hidden","false");
+  howtoStepIdx = Math.max(0, Math.min(howtoStepIdx, HOWTO_STEPS.length-1));
+  renderHowToPlay();
+}
+
+function closeHowToPlay(){
+  if (!howtoOverlay) return;
+  howtoOverlay.classList.remove("show");
+  howtoOverlay.setAttribute("aria-hidden","true");
+  if (howtoDontShow && howtoDontShow.checked) howtoMarkSeen();
+}
+
+function renderHowToPlay(){
+  if (!howtoTabs || !howtoContent || !howtoStepTitle) return;
+
+  // Tabs
+  howtoTabs.innerHTML = "";
+  HOWTO_STEPS.forEach((s, i)=>{
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "howtoTab" + (i===howtoStepIdx ? " isActive" : "");
+    btn.innerHTML = `
+      <div class="howtoTabTop">
+        <div class="howtoTabIcon" aria-hidden="true">${s.icon}</div>
+        <div>
+          <div class="howtoTabTitle">${escapeHtml(s.title)}</div>
+          <div class="howtoTabHint">${escapeHtml(s.hint)}</div>
+        </div>
+      </div>
+    `;
+    btn.addEventListener("click", ()=>{
+      howtoStepIdx = i;
+      renderHowToPlay();
+    });
+    howtoTabs.appendChild(btn);
+  });
+
+  // Dots
+  if (howtoDots){
+    howtoDots.innerHTML = "";
+    for (let i=0;i<HOWTO_STEPS.length;i++){
+      const d = document.createElement("div");
+      d.className = "howtoDot" + (i===howtoStepIdx ? " on" : "");
+      howtoDots.appendChild(d);
+    }
+  }
+
+  const step = HOWTO_STEPS[howtoStepIdx];
+  howtoStepTitle.textContent = `${howtoStepIdx+1}/${HOWTO_STEPS.length} • ${step.title}`;
+  howtoContent.innerHTML = step.html;
+
+  if (howtoBackBtn) howtoBackBtn.disabled = (howtoStepIdx === 0);
+  if (howtoNextBtn){
+    const isLast = (howtoStepIdx === HOWTO_STEPS.length-1);
+    howtoNextBtn.textContent = isLast ? "Finish" : "Next";
+  }
+}
+
+function maybeAutoShowHowToPlay(){
+  if (!howtoOverlay) return;
+  if (howtoIsSeen()) return;
+  // Show once after initial UI is mounted to avoid layout jank.
+  window.setTimeout(()=> openHowToPlay(true), 350);
+}
+
+
 /* ================= Events ================= */
 if (openGalleryBtn) openGalleryBtn.addEventListener("click", openGallery);
 if (closeGalleryBtn) closeGalleryBtn.addEventListener("click", closeGallery);
@@ -4951,6 +5142,25 @@ openInvBtn.addEventListener("click", openInventory);
 invOkBtn.addEventListener("click", closeInventory);
 closeInvBtn.addEventListener("click", closeInventory);
 invOverlay.addEventListener("click", (e)=>{ if(e.target === invOverlay) closeInventory(); });
+
+// How to Play
+if (openHowToBtn) openHowToBtn.addEventListener("click", ()=> openHowToPlay(true));
+if (closeHowToBtn) closeHowToBtn.addEventListener("click", closeHowToPlay);
+if (howtoOverlay) howtoOverlay.addEventListener("click", (e)=>{ if (e.target === howtoOverlay) closeHowToPlay(); });
+if (howtoBackBtn) howtoBackBtn.addEventListener("click", ()=>{ howtoStepIdx = Math.max(0, howtoStepIdx-1); renderHowToPlay(); });
+if (howtoNextBtn) howtoNextBtn.addEventListener("click", ()=>{
+  const last = (howtoStepIdx >= HOWTO_STEPS.length-1);
+  if (last){
+    if (howtoDontShow) howtoDontShow.checked = true;
+    howtoMarkSeen();
+    closeHowToPlay();
+    return;
+  }
+  howtoStepIdx = Math.min(HOWTO_STEPS.length-1, howtoStepIdx+1);
+  renderHowToPlay();
+});
+
+document.addEventListener("keydown", (e)=>{ if(e.key==="Escape" && howtoOverlay && howtoOverlay.classList.contains("show")) closeHowToPlay(); });
 
 // Inventory tab switching (Packs / Cards / Pets)
 // Fix: previously there was no click handler on #invTabs, so pressing the Cards tab
@@ -5160,6 +5370,7 @@ function boot(){
   buildSlots();
   updateTowersUI();
   syncUI();
+  maybeAutoShowHowToPlay();
   updatePetsBadge();
   initGoldPlaceholder();
   let _towersSaveCtr = 0;

@@ -2226,26 +2226,21 @@ cursor:pointer;
   width:100%;
   height:100%;
 }
-.flipStage{ position:relative; display:flex; align-items:center; justify-content:center; perspective: 1200px; }
-.flipCard{ perspective: 1200px; transform-style: preserve-3d; }
+.flipStage{ position:relative; display:flex; align-items:center; justify-content:center; }
+.flipCard{ perspective: 1200px; }
 .flipInner{
   position:relative;
   transform-style: preserve-3d;
   transition: transform 1.05s cubic-bezier(.2,.85,.15,1);
-  will-change: transform;
-  transform: translateZ(0);
 }
 .flipCard.isRevealed .flipInner{ transform: rotateY(180deg); }
 
 .flipFace{
   position:absolute;
   inset:0;
+  backface-visibility:hidden;
   border-radius: 14px;
   overflow:hidden;
-  backface-visibility:hidden;
-  -webkit-backface-visibility:hidden;
-  /* Fix 3D seam / hairline glitch during flip */
-  transform: translateZ(0.1px);
 }
 .flipFace img{
   width:100%;
@@ -2254,8 +2249,8 @@ cursor:pointer;
   display:block;
   padding: 10px;
 }
-.flipBack{ transform: rotateY(0deg) translateZ(0.1px); }
-.flipFront{ transform: rotateY(180deg) translateZ(0.1px); }
+.flipBack{ transform: rotateY(0deg); }
+.flipFront{ transform: rotateY(180deg); }
 
 .flipScanLine{
   position:absolute;
@@ -2281,6 +2276,23 @@ cursor:pointer;
   opacity: 1;
   animation: luckyScan 1.05s ease-in-out infinite;
 }
+
+/*
+  Fix: occasional “glitch line” during/after the flip.
+  Some renderers keep the scanline (or a thin seam where it was) visible
+  when the back/front faces swap. We only want the scanline during the
+  charging phase, so force-hide it once the card is revealed.
+*/
+.flipCard.isRevealed ~ .flipScanLine{
+  opacity: 0 !important;
+  animation: none !important;
+}
+
+/* Extra anti-seam hardening for 3D flips */
+.flipInner{ will-change: transform; transform: translateZ(0); }
+.flipFace{ -webkit-backface-visibility: hidden; backface-visibility: hidden; }
+.flipBack{ transform: rotateY(0deg) translateZ(0.1px); }
+.flipFront{ transform: rotateY(180deg) translateZ(0.1px); }
 @keyframes luckyScan{
   0%{ transform: translateY(-34px); opacity:0; }
   25%{ opacity:1; }
@@ -2291,6 +2303,150 @@ cursor:pointer;
 .luckyResultImgWrap.mutGlow{ overflow: visible; }
 
 .luckyResultBody .okRow{ margin-top:10px; padding:10px 0 2px; }
+
+
+/* ===============================
+   HOW TO PLAY (BEGINNER GUIDE)
+   =============================== */
+
+.howtoBtn .howtoIcon{ margin-right: 6px; }
+
+.howtoModal{
+  width: min(980px, 96vw);
+  max-width: 980px;
+}
+
+.howtoBody{ padding: 12px; }
+
+.howtoLayout{
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.howtoTabs{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.howtoTab{
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+  color: rgba(255,255,255,.92);
+  cursor: pointer;
+  transition: transform .12s ease, border-color .12s ease, background .12s ease;
+}
+
+.howtoTab:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,.18); }
+
+.howtoTab.isActive{
+  border-color: rgba(82,255,240,.28);
+  box-shadow: 0 0 0 1px rgba(82,255,240,.15), 0 16px 40px rgba(0,0,0,.45);
+}
+
+.howtoTabTop{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.howtoTabIcon{
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: rgba(0,0,0,.28);
+  border: 1px solid rgba(255,255,255,.08);
+}
+
+.howtoTabTitle{ font-weight: 900; letter-spacing: .2px; }
+
+.howtoTabHint{ margin-top: 6px; font-size: 12px; color: rgba(255,255,255,.70); line-height: 1.35; }
+
+.howtoRight{
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+  padding: 12px;
+}
+
+.howtoTop{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.howtoStepTitle{ font-size: 18px; font-weight: 1000; letter-spacing: .2px; }
+
+.howtoDots{ display: flex; gap: 6px; }
+.howtoDot{
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.18);
+}
+.howtoDot.on{ background: rgba(82,255,240,.75); }
+
+.howtoContent{
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,.10);
+  color: rgba(255,255,255,.86);
+  line-height: 1.55;
+}
+
+.howtoContent h4{ margin: 0 0 6px; font-size: 14px; letter-spacing: .2px; }
+.howtoContent ul{ margin: 8px 0 0 18px; }
+.howtoContent li{ margin: 6px 0; }
+.howtoContent .howtoCallout{
+  margin-top: 10px;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(0,0,0,.26);
+  border: 1px solid rgba(255,255,255,.10);
+}
+
+.howtoFooter{
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.howtoDontShow{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: rgba(255,255,255,.72);
+}
+
+.howtoDontShow input{
+  width: 16px;
+  height: 16px;
+}
+
+.howtoNav{ display:flex; gap: 8px; }
+
+@media (max-width: 720px){
+  .howtoLayout{ grid-template-columns: 1fr; }
+  .howtoTabs{
+    flex-direction: row;
+    overflow: auto;
+    padding-bottom: 6px;
+  }
+  .howtoTab{ min-width: 220px; }
+  .howtoFooter{ flex-direction: column; align-items: stretch; }
+  .howtoNav{ justify-content: flex-end; }
+}
 
 
 /* ===============================
