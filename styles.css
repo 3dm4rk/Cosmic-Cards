@@ -2197,9 +2197,10 @@ cursor:pointer;
 }
 .luckyResultImgWrap{
   width: 100%;
-  max-width: 240px;
+  /* Match the real card art ratio used across the game (prevents any cropping) */
+  aspect-ratio: 2.75 / 3.85;
+  max-width: 260px;
   margin: 0 auto 8px;
-  aspect-ratio: 2/3;
   border-radius: 16px;
   border:1px solid rgba(255,255,255,.12);
   background: rgba(0,0,0,.22);
@@ -2207,13 +2208,83 @@ cursor:pointer;
   display:flex;
   align-items:center;
   justify-content:center;
-  padding:8px;
+  padding: 0; /* padding goes on the image so the full card always fits */
 }
 .luckyResultImgWrap img{
   width:100%;
   height:100%;
-  object-fit:contain;
   display:block;
+  object-fit: contain !important;
+  padding: 10px;
+}
+
+/* Lucky Draw — Flip reveal stage (ensures reward image never crops) */
+.flipStage,
+.flipCard,
+.flipInner,
+.flipFace{
+  width:100%;
+  height:100%;
+}
+.flipStage{ position:relative; display:flex; align-items:center; justify-content:center; perspective: 1200px; }
+.flipCard{ perspective: 1200px; transform-style: preserve-3d; }
+.flipInner{
+  position:relative;
+  transform-style: preserve-3d;
+  transition: transform 1.05s cubic-bezier(.2,.85,.15,1);
+  will-change: transform;
+  transform: translateZ(0);
+}
+.flipCard.isRevealed .flipInner{ transform: rotateY(180deg); }
+
+.flipFace{
+  position:absolute;
+  inset:0;
+  border-radius: 14px;
+  overflow:hidden;
+  backface-visibility:hidden;
+  -webkit-backface-visibility:hidden;
+  /* Fix 3D seam / hairline glitch during flip */
+  transform: translateZ(0.1px);
+}
+.flipFace img{
+  width:100%;
+  height:100%;
+  object-fit: contain !important;
+  display:block;
+  padding: 10px;
+}
+.flipBack{ transform: rotateY(0deg) translateZ(0.1px); }
+.flipFront{ transform: rotateY(180deg) translateZ(0.1px); }
+
+.flipScanLine{
+  position:absolute;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  top: 18%;
+  opacity: 0;
+  background: linear-gradient(90deg, rgba(255,255,255,0), rgba(82,255,240,.9), rgba(255,255,255,0));
+  filter: drop-shadow(0 0 18px rgba(82,255,240,.55));
+  pointer-events:none;
+}
+.flipGlow{
+  position:absolute;
+  inset: -14px;
+  border-radius: 18px;
+  opacity: 0;
+  background: radial-gradient(circle at 50% 40%, rgba(82,255,240,.18), rgba(0,0,0,0) 65%);
+  pointer-events:none;
+}
+.flipStage.isCharging .flipGlow{ opacity: 1; }
+.flipStage.isReady .flipScanLine{
+  opacity: 1;
+  animation: luckyScan 1.05s ease-in-out infinite;
+}
+@keyframes luckyScan{
+  0%{ transform: translateY(-34px); opacity:0; }
+  25%{ opacity:1; }
+  100%{ transform: translateY(240px); opacity:0; }
 }
 
 /* Allow mutation glow to bleed in Lucky Draw result */

@@ -412,8 +412,8 @@ migrateCards();
 ensureDeckSlotPurchases();
 ensureDeckCardLocations();
 ensureDeckCardLocations();
-if (!state.summoners || typeof state.summoners !== 'object') state.summoners = {selectedId:'3dm4rk', owned:['3dm4rk'], levels:{'3dm4rk':1}, nextBonusAt: Date.now()+30000, nextZenoAt: Date.now()+60000};
-if (!Number.isFinite(state.summoners.nextBonusAt)) state.summoners.nextBonusAt = Date.now()+30000;
+if (!state.summoners || typeof state.summoners !== 'object') state.summoners = {selectedId:'3dm4rk', owned:['3dm4rk'], levels:{'3dm4rk':1}, nextBonusAt: Date.now()+15000, nextZenoAt: Date.now()+60000};
+if (!Number.isFinite(state.summoners.nextBonusAt)) state.summoners.nextBonusAt = Date.now()+15000;
 
 if (!Number.isFinite(state.summoners.nextZenoAt)) state.summoners.nextZenoAt = Date.now()+60000;
 
@@ -618,6 +618,14 @@ let lastTime = performance.now();
 function fmt(n){ return n.toLocaleString("en-US"); }
 
 
+function titleCase(str){
+  str = String(str||"");
+  if (!str) return str;
+  return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+}
+
+
+
 function updateGoldUI(){
   if (!goldEl) return;
   goldEl.textContent = fmt(state.gold);
@@ -716,52 +724,42 @@ function petLimitForTier(tier){
   return 1;
 }
 function towerMultiplierForTier(tier){
-  // Rebalanced multipliers (SPEC)
-  // 1 Roylier: 1.0x
-  // 2 Nova:    1.2x
-  // 3 Ember:   1.5x
-  // 4 Aegis:   1.7x
-  // 5 Void:    2.0x
-  // 6 Zioti:   2.2x
-  // 7 Zeno:    2.5x
-  tier = Number(tier)||1;
-  if (tier >= 7) return 2.5;
-  if (tier >= 6) return 2.2;
-  if (tier >= 5) return 2.0;
-  if (tier >= 4) return 1.7;
-  if (tier >= 3) return 1.5;
-  if (tier >= 2) return 1.2;
+  if (tier >= 5) return 2.5;   // Void (optional spice)
+  if (tier >= 3) return 2.0;   // Ember/Aegis
+  if (tier >= 2) return 1.5;   // Nova
   return 1.0;
 }
 function towerCapForTier(tier){
   // Tower storage cap by tier (IMPORTANT: this should NOT cap the player's main gold)
-  // Rebalanced caps (SPEC)
-  tier = Number(tier)||1;
-  if (tier >= 7) return 1000000; // Zeno
-  if (tier >= 6) return 500000;  // Zioti
-  if (tier >= 5) return 200000;  // Void
-  if (tier >= 4) return 150000;  // Aegis
-  if (tier >= 3) return 100000;  // Ember
-  if (tier >= 2) return 50000;   // Nova
-  return 20000;                  // Roylier (3dm4rk)
+  // Zeno: tower cap 1,000,000
+  if (tier >= 7) return 1000000; // Zeno (SPEC)
+  // Zioti SPEC: 200,000 cap
+  if (tier >= 6) return 200000; // Zioti (SPEC)
+  // Existing progression caps
+  if (tier >= 5) return 200000; // Void
+  if (tier >= 4) return 150000; // Aegis
+  if (tier >= 3) return 100000; // Ember
+  if (tier >= 2) return 50000;  // Nova
+  return 20000;                 // 3dm4rk
 }
-function bonusGoldPer30sForTier(tier){
-  // Active bonus by tier (SPEC)
-  // NOTE: Zeno uses a separate 1-minute RNG bonus (no fixed 30s bonus)
-  tier = Number(tier)||1;
+function bonusGoldPer15sForTier(tier){
+  // Active bonus by tier
+  // Zeno SPEC: uses a separate 1-minute RNG bonus (no fixed 15s bonus)
   if (tier >= 7) return 0;
-  if (tier >= 6) return 3000; // Zioti: +3,000 / 30s
-  if (tier >= 5) return 2000; // Void:  +2,000 / 30s
-  if (tier >= 4) return 1500; // Aegis: +1,500 / 30s
-  if (tier >= 3) return 1000; // Ember: +1,000 / 30s
-  if (tier >= 2) return 500;  // Nova:  +500  / 30s
-  return 0;                   // Roylier: none
+  // Zioti SPEC: +1,500 gold every 15 seconds
+  if (tier >= 6) return 1500; // Zioti (SPEC)
+  // Keep existing balance for earlier summoners
+  if (tier >= 5) return 2000; // Void
+  if (tier >= 4) return 1000; // Aegis
+  if (tier >= 3) return 1000; // Ember
+  if (tier >= 2) return 500;  // Nova
+  return 0;
 }
 
 function onActiveSummonerChanged(){
   // Reset bonus timers so previous summoner effects don't linger
   if (state?.summoners){
-    state.summoners.nextBonusAt = Date.now() + 30000;
+    state.summoners.nextBonusAt = Date.now() + 15000;
     state.summoners.nextZenoAt = Date.now() + 60000;
   }
 
@@ -1025,7 +1023,7 @@ function defaultState(){
       selectedId: "3dm4rk",
       owned: ["3dm4rk"],
       levels: {"3dm4rk": 1},
-      nextBonusAt: Date.now() + 30000,
+      nextBonusAt: Date.now() + 15000,
       nextZenoAt: Date.now() + 60000
     },
     towers: { stored: 0, lastTs: Date.now() },
@@ -1827,10 +1825,10 @@ function formatSummonerTooltip(){
   const mult = towerMultiplierForTier(tier);
   const cap = towerCapForTier(tier);
   const petLimit = petLimitForTier(tier);
-  const bonus15 = bonusGoldPer30sForTier(tier);
+  const bonus15 = bonusGoldPer15sForTier(tier);
 
   const lines = [];
-  lines.push(bonus15 > 0 ? `+${fmt(bonus15)} gold / 30s` : "No bonus gold");
+  lines.push(bonus15 > 0 ? `+${fmt(bonus15)} gold / 15s` : "No bonus gold");
   lines.push(`Pets: ${petLimit}`);
   lines.push(`Tower: ${mult.toFixed(1)}x • Cap ${fmt(cap)}`);
   lines.push(`Deck: ${activeId==="3dm4rk" ? "Only Deck A slots 1–3" : "Tier-based slots + Deck B"}`);
@@ -2745,20 +2743,272 @@ function syncUI(){
   updateNotificationsBadges();
 }
 
+
 /* ================= Notifications System ================= */
 
-const NOTIF_MISSIONS = [
-  { id:"m_rarest_common", label:()=>`Get the rarest Common card`, reward:2, done:()=>ownsRarestCardOfRarity("common") },
-  { id:"m_rarest_rare", label:()=>`Get the rarest Rare card`, reward:2, done:()=>ownsRarestCardOfRarity("rare") },
-  { id:"m_rarest_epic", label:()=>`Get the rarest Epic card`, reward:3, done:()=>ownsRarestCardOfRarity("epic") },
-  { id:"m_rarest_mythical", label:()=>`Get the rarest Mythical card`, reward:2, done:()=>ownsRarestCardOfRarity("mythical") },
-  { id:"m_rarest_legendary", label:()=>`Get the rarest Legendary card`, reward:2, done:()=>ownsRarestCardOfRarity("legendary") },
-  { id:"m_rarest_cosmic", label:()=>`Get the rarest Cosmic card`, reward:5, done:()=>ownsRarestCardOfRarity("cosmic") },
-  { id:"m_rarest_interstellar", label:()=>`Get the rarest Interstellar card`, reward:10, done:()=>ownsRarestCardOfRarity("interstellar") },
+// ---- Mission helper utils (for new beginner/mid/hardcore missions) ----
+const RARITY_ORDER = ["common","rare","epic","mythical","legendary","cosmic","interstellar"];
+function rarityIndex(r){ return Math.max(0, RARITY_ORDER.indexOf(String(r||"common").toLowerCase())); }
+function countOwnedByRarity(rarity){
+  const rr = String(rarity||"").toLowerCase();
+  return (Array.isArray(state.cardsOwned) ? state.cardsOwned : []).filter(c => String(c?.rarity||"").toLowerCase()===rr).length;
+}
+function countOwnedAtLeastRarity(minRarity){
+  const minI = rarityIndex(minRarity);
+  return (Array.isArray(state.cardsOwned) ? state.cardsOwned : []).filter(c => rarityIndex(c?.rarity) >= minI).length;
+}
+function countFilledDeckSlots(deckKey){
+  const dk = deckKey === "B" ? "B" : "A";
+  const arr = state.decks?.[dk];
+  if (!Array.isArray(arr)) return 0;
+  return arr.filter(x => x !== null && x !== undefined).length;
+}
+function countMutatedCardsAny(){
+  let n = 0;
+  for (const c of (Array.isArray(state.cardsOwned) ? state.cardsOwned : [])){
+    const muts = getMutationList(c);
+    if (Array.isArray(muts) && muts.length > 0){
+      // ignore legacy/normal-only
+      const hasNonNormal = muts.some(m=> normMutKey(m) !== "normal");
+      if (hasNonNormal) n++;
+    }
+  }
+  return n;
+}
 
-  { id:"m_rainbow_1", label:()=>`Get 1 card with Rainbow mutation`, reward:2, done:()=>countCardsWithMutation("rainbow") >= 1 },
-  { id:"m_rainbow_5", label:()=>`Get 5 cards with Rainbow mutation`, reward:5, done:()=>countCardsWithMutation("rainbow") >= 5 },
-  { id:"m_rarest_legendary_rainbow", label:()=>`Get the rarest Legendary card with Rainbow mutation`, reward:10, done:()=>ownsRarestRarityWithMutation("legendary","rainbow") },
+function describeReward(reward){
+  if (typeof reward === "number"){
+    const r = Number(reward)||0;
+    return `Reward: ${r} free Lucky Draw ticket${r===1?"":"s"}`;
+  }
+  if (reward && typeof reward === "object"){
+    if (reward.type === "pack"){
+      const c = Number(reward.count)||1;
+      return `Reward: ${c} ${titleCase(reward.rarity||"")} Pack${c===1?"":"s"}`;
+    }
+    if (reward.type === "premium_pack_random"){
+      const c = Number(reward.count)||1;
+      return `Reward: ${c} Random Premium Pack${c===1?"":"s"} (Legendary/Cosmic/Interstellar)`;
+    }
+    if (reward.type === "gold"){
+      const a = Number(reward.amount)||0;
+      return `Reward: ${fmt(a)} gold`;
+    }
+  }
+  return "Reward: —";
+}
+
+function grantMissionReward(reward){
+  try{
+  ensureNotifications();
+
+  // Tickets
+  if (typeof reward === "number"){
+    const add = Number(reward)||0;
+    state.notifications.tickets = Number(state.notifications.tickets)||0;
+    state.notifications.tickets += add;
+    return `+${add} Lucky Draw ticket${add===1?"":"s"}.`;
+  }
+
+  // Structured rewards
+  if (reward && typeof reward === "object"){
+    if (reward.type === "gold"){
+      const a = Math.max(0, Number(reward.amount)||0);
+      state.gold = Number(state.gold)||0;
+      state.gold += a;
+      return `+${fmt(a)} gold.`;
+    }
+
+    const addPack = (rarity, count)=>{
+      const r = String(rarity||"common").toLowerCase();
+      const c = Math.max(1, Number(count)||1);
+      if (!state.invCounts || typeof state.invCounts !== "object") state.invCounts = { common:0, rare:0, epic:0, mythical:0, legendary:0, cosmic:0, interstellar:0 };
+      state.invCounts[r] = Number(state.invCounts[r])||0;
+      state.invCounts[r] += c;
+      return { rarity:r, count:c };
+    };
+
+    if (reward.type === "pack"){
+      const g = addPack(reward.rarity, reward.count);
+      return `+${g.count} ${titleCase(g.rarity)} Pack${g.count===1?"":"s"}.`;
+    }
+
+    if (reward.type === "premium_pack_random"){
+      const pool = Array.isArray(reward.pool) ? reward.pool : ["legendary","cosmic","interstellar"];
+      const pick = String(pool[Math.floor(Math.random()*pool.length)] || "legendary").toLowerCase();
+      const g = addPack(pick, reward.count);
+      return `+${g.count} ${titleCase(g.rarity)} Pack${g.count===1?"":"s"} (Random Premium).`;
+    }
+  }
+
+  return "Reward granted.";
+  }catch(err){
+    console.error('[missions] reward grant failed', err);
+    return 'Reward failed to grant (bug). Please refresh and try again.';
+  }
+}
+
+
+const NOTIF_MISSIONS = [
+  // ===================== BEGINNER =====================
+  {
+    id:"b_own_5_cards",
+    group:"Beginner",
+    label:()=>`Own 5 cards`,
+    reward: 1,
+    done:()=> (Array.isArray(state.cardsOwned) ? state.cardsOwned.length : 0) >= 5
+  },
+  {
+    id:"b_fill_deck_a_3",
+    group:"Beginner",
+    label:()=>`Place 3 cards in Deck A`,
+    reward: 1,
+    done:()=> countFilledDeckSlots("A") >= 3
+  },
+  {
+    id:"b_own_1_rare",
+    group:"Beginner",
+    label:()=>`Own 1 Rare card`,
+    reward: 1,
+    done:()=> countOwnedByRarity("rare") >= 1
+  },
+  {
+    id:"b_reach_50k_gold",
+    group:"Beginner",
+    label:()=>`Reach 50,000 gold`,
+    reward: 2,
+    done:()=> (Number(state.gold)||0) >= 50000
+  },
+  {
+    id:"b_get_1_mutation",
+    group:"Beginner",
+    label:()=>`Own 1 mutated card (any mutation)`,
+    reward: 1,
+    done:()=> countMutatedCardsAny() >= 1
+  },
+  {
+    id:"b_premium_pack_random",
+    group:"Beginner",
+    label:()=>`Beginner Jackpot: claim a random Premium Pack`,
+    reward: { type:"premium_pack_random", pool:["legendary","cosmic","interstellar"], count:1 },
+    done:()=> (Array.isArray(state.cardsOwned) ? state.cardsOwned.length : 0) >= 10
+  },
+
+  // ===================== MID =====================
+  {
+    id:"m_own_25_cards",
+    group:"Mid",
+    label:()=>`Own 25 cards`,
+    reward: 3,
+    done:()=> (Array.isArray(state.cardsOwned) ? state.cardsOwned.length : 0) >= 25
+  },
+  {
+    id:"m_fill_deck_a_9",
+    group:"Mid",
+    label:()=>`Fill all 9 slots in Deck A`,
+    reward: 3,
+    done:()=> countFilledDeckSlots("A") >= 9
+  },
+  {
+    id:"m_own_3_epic_plus",
+    group:"Mid",
+    label:()=>`Own 3 Epic+ cards`,
+    reward: 4,
+    done:()=> countOwnedAtLeastRarity("epic") >= 3
+  },
+  {
+    id:"m_mutated_5_any",
+    group:"Mid",
+    label:()=>`Own 5 mutated cards (any mutation)`,
+    reward: 4,
+    done:()=> countMutatedCardsAny() >= 5
+  },
+  {
+    id:"m_reach_250k_gold",
+    group:"Mid",
+    label:()=>`Reach 250,000 gold`,
+    reward: 5,
+    done:()=> (Number(state.gold)||0) >= 250000
+  },
+  {
+    id:"m_tower_100k_stored",
+    group:"Mid",
+    label:()=>`Have 100,000 gold stored in the Tower`,
+    reward: 5,
+    done:()=> (Number(state.towers?.stored)||0) >= 100000
+  },
+
+  // ===================== HARDCORE =====================
+  {
+    id:"h_rarest_common",
+    group:"Hardcore",
+    label:()=>`Get the rarest Common card`,
+    reward: 2,
+    done:()=> ownsRarestCardOfRarity("common")
+  },
+  {
+    id:"h_rarest_rare",
+    group:"Hardcore",
+    label:()=>`Get the rarest Rare card`,
+    reward: 3,
+    done:()=> ownsRarestCardOfRarity("rare")
+  },
+  {
+    id:"h_rarest_epic",
+    group:"Hardcore",
+    label:()=>`Get the rarest Epic card`,
+    reward: 4,
+    done:()=> ownsRarestCardOfRarity("epic")
+  },
+  {
+    id:"h_rarest_legendary",
+    group:"Hardcore",
+    label:()=>`Get the rarest Legendary card`,
+    reward: 6,
+    done:()=> ownsRarestCardOfRarity("legendary")
+  },
+  {
+    id:"h_rarest_cosmic",
+    group:"Hardcore",
+    label:()=>`Get the rarest Cosmic card`,
+    reward: 8,
+    done:()=> ownsRarestCardOfRarity("cosmic")
+  },
+  {
+    id:"h_rarest_interstellar",
+    group:"Hardcore",
+    label:()=>`Get the rarest Interstellar card`,
+    reward: 12,
+    done:()=> ownsRarestCardOfRarity("interstellar")
+  },
+  {
+    id:"h_rainbow_1",
+    group:"Hardcore",
+    label:()=>`Get 1 card with Rainbow mutation`,
+    reward: 5,
+    done:()=> countCardsWithMutation("rainbow") >= 1
+  },
+  {
+    id:"h_rainbow_5",
+    group:"Hardcore",
+    label:()=>`Get 5 cards with Rainbow mutation`,
+    reward: 10,
+    done:()=> countCardsWithMutation("rainbow") >= 5
+  },
+  {
+    id:"h_blackhole_1",
+    group:"Hardcore",
+    label:()=>`Get 1 card with Blackhole mutation`,
+    reward: 12,
+    done:()=> countCardsWithMutation("blackhole") >= 1
+  },
+  {
+    id:"h_own_100_cards",
+    group:"Hardcore",
+    label:()=>`Own 100 cards`,
+    reward: 15,
+    done:()=> (Array.isArray(state.cardsOwned) ? state.cardsOwned.length : 0) >= 100
+  },
 ];
 
 const LUCKY_DRAW_COST_GOLD = 1000000;
@@ -2803,12 +3053,22 @@ function setMissionClaimed(id){
 }
 
 function unclaimedRewardsCount(){
+  // Count claimable missions only. Must be side-effect free (no DOM access).
   let n = 0;
-  for (const m of NOTIF_MISSIONS){
-    if (m.done() && !isMissionClaimed(m.id)) n++;
-  }
+  try{
+    if (!Array.isArray(NOTIF_MISSIONS)) return 0;
+    for (const m of NOTIF_MISSIONS){
+      if (!m) continue;
+      if (typeof m.done === "function" && m.done()){
+        const id = m.id || m.key || m.title || "";
+        if (id && typeof isMissionClaimed === "function" && isMissionClaimed(id)) continue;
+        n++;
+      }
+    }
+  }catch(_){}
   return n;
 }
+
 
 function updateNotificationsBadges(){
   if (!notifBadge || !notifRewardsBadge) return;
@@ -2851,7 +3111,7 @@ function renderNotifTab(){
 
     const p = document.createElement("div");
     p.className = "small muted";
-    p.textContent = "Complete missions to claim Lucky Draw tickets.";
+    p.textContent = "Complete missions to claim rewards.";
     notifContent.appendChild(p);
 
     const list = document.createElement("div");
@@ -2874,7 +3134,7 @@ function renderNotifTab(){
 
       const r = document.createElement("div");
       r.className = "missionReward";
-      r.textContent = `Reward: ${m.reward} free Lucky Draw ticket${m.reward===1?"":"s"}`;
+      r.textContent = describeReward(m.reward);
       left.appendChild(r);
 
       const right = document.createElement("div");
@@ -2899,11 +3159,10 @@ function renderNotifTab(){
         btn.type = "button";
         btn.textContent = "Claim";
         btn.addEventListener("click", ()=>{
-          ensureNotifications();
-          state.notifications.tickets += Number(m.reward)||0;
+          const msg = grantMissionReward(m.reward);
           setMissionClaimed(m.id);
           saveState();
-          toast("Reward Claimed", `+${m.reward} Lucky Draw ticket${m.reward===1?"":"s"}.`);
+          toast("Reward Claimed", msg);
           renderNotifTab();
         });
         right.appendChild(btn);
@@ -3662,29 +3921,79 @@ function addLuckyDrawCard(def){
   return card;
 }
 
+
 function showLuckyDrawResult(card){
   if (!luckyResultOverlay) return;
 
-  luckyResultName.textContent = card.name || "Reward";
-  luckyResultImg.src = card.img || "card.png";
+  // Ensure we have an image even if some callers pass only a name
+  const resolveCardImg = (c) => {
+    if (c && c.img && c.img !== "card.png") return c.img;
+    const nm = String(c?.name||"");
+    if (!nm) return "card.png";
+    // Try to find image by name in CARD_REWARDS table
+    try{
+      for (const rar of Object.keys(CARD_REWARDS||{})){
+        const arr = CARD_REWARDS[rar] || [];
+        const hit = arr.find(x => String(x.name) === nm);
+        if (hit && hit.img) return hit.img;
+      }
+    }catch(_){}
+    return "card.png";
+  };
 
-  // Make sure mutation glow is visible here too (same rules as other mutated cards)
+  const imgSrc = resolveCardImg(card);
+
+  if (luckyResultName) luckyResultName.textContent = card?.name || "Reward";
+
+  // Preferred: premium flip stage (back -> reveal)
   const wrap = luckyResultOverlay.querySelector(".luckyResultImgWrap");
   if (wrap){
-    // reset prior state
-    wrap.classList.remove("mutGlow");
-    for (const c of Array.from(wrap.classList)){
-      if (c.startsWith("mut-")) wrap.classList.remove(c);
-    }
-    wrap.style.removeProperty("--mut-glow");
-    wrap.style.removeProperty("--mut-speed");
-    wrap.style.removeProperty("--mut-gradient");
+    wrap.innerHTML = `
+      <div class="flipStage isCharging" id="luckyFlipStage" aria-label="Lucky draw reveal">
+        <div class="flipCard" id="luckyFlipCard">
+          <div class="flipInner">
+            <div class="flipFace flipBack">
+              <img alt="Card back" src="card.png" />
+            </div>
+            <div class="flipFace flipFront">
+              <img alt="Card" id="luckyFlipFrontImg" src="${imgSrc}" />
+            </div>
+          </div>
+        </div>
+        <div class="flipScanLine" aria-hidden="true"></div>
+        <div class="flipGlow" aria-hidden="true"></div>
+      </div>
+    `;
 
-    applyMutationGlow(wrap, card);
+    const stage = wrap.querySelector("#luckyFlipStage");
+    const cardEl = wrap.querySelector("#luckyFlipCard");
+    const frontImg = wrap.querySelector("#luckyFlipFrontImg");
+
+    // Force correct reward image (prevents "stuck on back card.png")
+    if (frontImg) frontImg.src = imgSrc;
+
+    // Apply mutation glow to the stage (edge-hugging glow)
+    if (stage){
+      try{ applyMutationGlow(stage, {...card, img: imgSrc}); }catch(_){}
+    }
+
+    // Animate: charge -> flip
+    setTimeout(()=>{ stage && stage.classList.add("isReady"); }, 220);
+    setTimeout(()=>{
+      if (cardEl) cardEl.classList.add("isRevealed");
+      // Failsafe: also set the legacy img element in case CSS/DOM differs
+      if (luckyResultImg) luckyResultImg.src = imgSrc;
+    }, 900);
+    setTimeout(()=>{ stage && stage.classList.remove("isCharging"); }, 1150);
   }
 
-  luckyResultMeta.textContent =
-    `Rarity: ${(card.rarity||"").toUpperCase()} • Mutation: ${mutationLabel(card)} • ${Number(card.gps)||0} GPS`;
+  // Fallback: if modal doesn't have the flip wrapper, use the existing image element.
+  if (luckyResultImg) luckyResultImg.src = imgSrc;
+
+  if (luckyResultMeta){
+    luckyResultMeta.textContent =
+      `Rarity: ${(card?.rarity||"").toUpperCase()} • Mutation: ${mutationLabel(card)} • ${Number(card?.gps)||0} GPS`;
+  }
 
   openLuckyResultModal();
 }
@@ -4223,13 +4532,13 @@ function renderSummonersList(){
       const mult = towerMultiplierForTier(tier);
       const cap = towerCapForTier(tier);
       const petLimit = petLimitForTier(tier);
-      const bonus15 = bonusGoldPer30sForTier(tier);
+      const bonus15 = bonusGoldPer15sForTier(tier);
 
       const html = `
         <div class="ttName">${escapeHtml(s.name)}</div>
         <div class="ttRow"><span class="ttBadge">SUMMONER</span>${isActive ? `<span class="ttBadge">IN USE</span>` : ``}</div>
         <div class="ttRow" style="opacity:.82">${escapeHtml(s.desc || "")}</div>
-        ${isActive ? `<div class="ttRow">Tier ${tier} • ${bonus15>0?`+${fmt(bonus15)}/ 30s`:"No bonus"} • Pets ${petLimit} • Tower ${mult.toFixed(1)}x (cap ${fmt(cap)})</div>` : ``}
+        ${isActive ? `<div class="ttRow">Tier ${tier} • ${bonus15>0?`+${fmt(bonus15)}/15s`:"No bonus"} • Pets ${petLimit} • Tower ${mult.toFixed(1)}x (cap ${fmt(cap)})</div>` : ``}
       `;
       showTooltipHtml(html, e.clientX, e.clientY);
     });
@@ -4245,12 +4554,12 @@ function renderSummonersList(){
       const mult = towerMultiplierForTier(tier);
       const cap = towerCapForTier(tier);
       const petLimit = petLimitForTier(tier);
-      const bonus15 = bonusGoldPer30sForTier(tier);
+      const bonus15 = bonusGoldPer15sForTier(tier);
       return `
         <div class="ttName">${escapeHtml(s.name)}</div>
         <div class="ttRow"><span class="ttBadge">SUMMONER</span>${isActive ? `<span class="ttBadge">IN USE</span>` : ``}</div>
         <div class="ttRow" style="opacity:.82">${escapeHtml(s.desc || "")}</div>
-        ${isActive ? `<div class="ttRow">Tier ${tier} • ${bonus15>0?`+${fmt(bonus15)}/ 30s`:"No bonus"} • Pets ${petLimit} • Tower ${mult.toFixed(1)}x (cap ${fmt(cap)})</div>` : ``}
+        ${isActive ? `<div class="ttRow">Tier ${tier} • ${bonus15>0?`+${fmt(bonus15)}/15s`:"No bonus"} • Pets ${petLimit} • Tower ${mult.toFixed(1)}x (cap ${fmt(cap)})</div>` : ``}
       `;
     });
 
@@ -4288,7 +4597,7 @@ function renderSummonerDetails(id){
   const mult = towerMultiplierForTier(tier);
   const cap = towerCapForTier(tier);
   const petLimit = petLimitForTier(tier);
-  const bonus15 = bonusGoldPer30sForTier(tier);
+  const bonus15 = bonusGoldPer15sForTier(tier);
 
   if(selectedSummonerName) selectedSummonerName.textContent = s.name;
   if(summonerDetailName) summonerDetailName.textContent = s.name;
@@ -4297,7 +4606,7 @@ function renderSummonerDetails(id){
   if(summonerDetailText){
     const lines = [];
     lines.push(s.desc || "");
-    lines.push(bonus15 > 0 ? `Bonus: +${fmt(bonus15)} gold every 30s.` : "No bonus gold.");
+    lines.push(bonus15 > 0 ? `Bonus: +${fmt(bonus15)} gold every 15s.` : "No bonus gold.");
     if (activeId === "3dm4rk"){
       lines.push("Deck: Only Deck A (Slots 1–3). Other slots and Deck B are locked.");
     } else {
@@ -4309,7 +4618,7 @@ function renderSummonerDetails(id){
   }
 
   if(summonerBonusText){
-    summonerBonusText.textContent = bonus15 <= 0 ? "None" : `+${fmt(bonus15)} / 30s`;
+    summonerBonusText.textContent = bonus15 <= 0 ? "None" : `+${fmt(bonus15)} / 15s`;
   }
   if(summonerUpgradeCost){
     summonerUpgradeCost.textContent = (cost === Infinity) ? "MAX" : fmt(cost);
@@ -4448,17 +4757,17 @@ function tickSummonerBonus(){
 
   let changed = false;
 
-  // --- Fixed 30s bonus (normal summoners) ---
-  const bonus15 = bonusGoldPer30sForTier(tier);
-  if (!Number.isFinite(state.summoners.nextBonusAt)) state.summoners.nextBonusAt = now + 30000;
+  // --- Fixed 15s bonus (normal summoners) ---
+  const bonus15 = bonusGoldPer15sForTier(tier);
+  if (!Number.isFinite(state.summoners.nextBonusAt)) state.summoners.nextBonusAt = now + 15000;
 
   if (bonus15 > 0 && now >= state.summoners.nextBonusAt){
     // catch up (avoid huge loops)
-    const missed = Math.min(10, Math.floor((now - state.summoners.nextBonusAt) / 30000) + 1);
+    const missed = Math.min(10, Math.floor((now - state.summoners.nextBonusAt) / 15000) + 1);
     const gain = bonus15 * missed;
 
     state.gold += gain;
-    state.summoners.nextBonusAt += missed * 30000;
+    state.summoners.nextBonusAt += missed * 15000;
     changed = true;
 
 
