@@ -3278,3 +3278,52 @@ body::after{
   16%{ opacity:1; transform: translateX(-50%) translateY(0) rotate(-14deg) scale(1); }
   100%{ opacity:0; transform: translateX(-50%) translateY(18px) rotate(-14deg) scale(1.12); }
 }
+
+
+/* ===============================
+   FLOATING / SCROLL-FOLLOW TOWER (CENTERED)
+   - Stays bottom-center (never bottom-right)
+   - Scroll UP: rises into view (.isShown)
+   - Scroll DOWN: drops out of view (still fixed, but hidden)
+   =============================== */
+
+.goldPlaceholder.isFloating{
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%) translateY(18px) scale(.98);
+  width: auto !important;
+  margin: 0 !important;
+  z-index: 20;
+  pointer-events: none; /* prevents blocking UI behind except inner */
+  opacity: 0;
+  transition: transform .22s ease, opacity .22s ease;
+}
+
+/* allow clicking the tower itself */
+.goldPlaceholder.isFloating .goldPlaceholderInner{
+  pointer-events: auto;
+}
+
+/* shown (rises) */
+.goldPlaceholder.isFloating.isShown{
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+
+/* instant toggle helper (prevents jank on mode switch) */
+.goldPlaceholder.isFloating.isInstant{
+  transition: none !important;
+}
+
+/* mobile tuning */
+@media (max-width:768px){
+  .goldPlaceholder.isFloating{
+    bottom: 12px;
+    transform: translateX(-50%) translateY(18px) scale(.92);
+  }
+  .goldPlaceholder.isFloating.isShown{
+    transform: translateX(-50%) translateY(0) scale(.92);
+  }
+}
+

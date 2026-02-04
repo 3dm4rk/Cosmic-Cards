@@ -35,6 +35,11 @@
         <span>Inventory</span>
         <span class="invBadge" id="invBadge">0</span>
       </button>
+      <button class="invBtn howtoBtn" id="openHowToBtn" type="button" aria-haspopup="dialog" aria-controls="howtoOverlay" aria-label="How to Play" title="How to Play">
+        <span class="howtoIcon" aria-hidden="true">📖</span>
+        <span class="btnLabel">How to Play</span>
+      </button>
+
 <div class="weatherWrap" id="weatherWrap" aria-label="Weather System">
         <div class="weatherChip" id="weatherChip" tabindex="0" role="button" aria-haspopup="true" aria-label="Weather status">
           <div class="weatherIconBox weather-normal" id="weatherIconBox">
@@ -453,6 +458,45 @@
 
       <div class="okRow">
         <button class="btn btnPrimary" id="summonersOkBtn" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- How to Play (Beginner Guide) -->
+<div class="modalOverlay" id="howtoOverlay" aria-hidden="true">
+  <div class="modal howtoModal" id="howtoModal" role="dialog" aria-modal="true" aria-labelledby="howtoTitle">
+    <div class="modalHead">
+      <b id="howtoTitle">How to Play</b>
+      <button class="closeBtn" id="closeHowToBtn" type="button">Close</button>
+    </div>
+
+    <div class="modalBody howtoBody">
+      <div class="howtoLayout">
+        <div class="howtoTabs" id="howtoTabs"></div>
+
+        <div class="howtoMain">
+          <div class="howtoTop">
+            <div class="howtoStepTitle" id="howtoStepTitle">—</div>
+            <div class="howtoDots" id="howtoDots" aria-hidden="true"></div>
+          </div>
+
+          <div class="howtoContent" id="howtoContent"></div>
+
+          <div class="howtoFooter">
+            <label class="howtoDontShow">
+              <input type="checkbox" id="howtoDontShow" />
+              <span>Don’t show again</span>
+            </label>
+
+            <div class="howtoNav">
+              <button class="btn" id="howtoBackBtn" type="button">Back</button>
+              <button class="btn btnPrimary" id="howtoNextBtn" type="button">Next</button>
+            </div>
+          </div>
+
+        </div>
       </div>
     </div>
   </div>
