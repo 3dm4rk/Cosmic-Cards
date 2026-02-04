@@ -31,6 +31,7 @@ const AudioSystem = (() => {
     tower: safeAudio("sfx/earn-gold.mp3"),
     ability: safeAudio("sfx/ability-gold.mp3"),
     openCard: safeAudio("sfx/opening-card.mp3"),
+    strike: safeAudio("sfx/strike.mp3"),
     initialized: false,
     _bgmStarted: false,
 
@@ -365,14 +366,14 @@ const WEATHER_EVENT_INTERVAL_MS = 5 * 60 * 1000;
 const WEATHER_EVENT_DURATION_MS = 90 * 1000; // 1m30s
 const WEATHER_STRIKE_INTERVAL_MS = 10 * 1000;
 const WEATHER_STRIKE_ATTEMPTS = 9; // every 10s for 1m30s
-const WEATHER_STRIKE_CHANCE = 0.10;
+const WEATHER_STRIKE_CHANCE = 0.10; //0.10 chance
 
 const WEATHER_TABLE = [
   { key:"normal",      name:"Normal Weather", icon:"☀", chance:60, special:false },
   { key:"spacestorm",  name:"Space Storm",    icon:"🌩", chance:40, special:true, mutation:"Thunder",  mult:2 },
   { key:"antigravity", name:"Anti-Gravity",   icon:"🪐", chance:25,  special:true, mutation:"Blackhole", mult:3 },
   { key:"ascension",   name:"Ascension",      icon:"✨", chance:15,  special:true, mutation:"Godly",    mult:4 },
-  { key:"multiverse",  name:"Multiverse",     icon:"🌌", chance:5,  special:true, mutation:"Heavenly", mult:5 },
+  { key:"multiverse",  name:"Multiverse",     icon:"🌌", chance:1,  special:true, mutation:"Heavenly", mult:5 },
 ];
 
 const MUTATION_MULTS = {
@@ -1087,9 +1088,11 @@ function loadState(){
       const pn = parsed.notifications;
       const pt = Number(pn.tickets);
       const pc = (pn.claimed && typeof pn.claimed === "object") ? pn.claimed : {};
+      const pm = (pn.mutationMachine && typeof pn.mutationMachine === "object") ? pn.mutationMachine : (s.notifications?.mutationMachine||null);
       s.notifications = {
         tickets: Number.isFinite(pt) ? pt : (s.notifications?.tickets||0),
-        claimed: pc
+        claimed: pc,
+        mutationMachine: pm ? { ...pm } : (s.notifications?.mutationMachine ? { ...s.notifications.mutationMachine } : undefined)
       };
     }
     s.petsOwned = Array.isArray(parsed.petsOwned) ? parsed.petsOwned : [];
@@ -1138,14 +1141,23 @@ try{
 	try{
 	  const pn = parsed.notifications || {};
 	  const claimed = (pn.claimed && typeof pn.claimed === "object") ? pn.claimed : {};
+	  const pm = (pn.mutationMachine && typeof pn.mutationMachine === "object") ? pn.mutationMachine : (s.notifications?.mutationMachine||null);
 	  s.notifications = {
 	    tickets: Number(pn.tickets)||0,
-	    claimed: { ...claimed }
+	    claimed: { ...claimed },
+	    mutationMachine: pm ? { ...pm } : (s.notifications?.mutationMachine ? { ...s.notifications.mutationMachine } : undefined)
 	  };
 	}catch(_){
 	  // fall back to defaults
 	  s.notifications = s.notifications || { tickets: 0, claimed: {} };
 	}
+
+    // weather (persist timers so refresh won't reset)
+    try{
+      if (parsed.weather && typeof parsed.weather === "object"){
+        s.weather = { ...(s.weather||{}), ...(parsed.weather||{}) };
+      }
+    }catch(_){/* keep defaults */}
 
 return s;
   }catch{
@@ -1264,7 +1276,21 @@ function computeCardGps(card){
 
 /* ================= Mutation glow helpers ================= */
 function applyMutationGlow(el, card){
-  if (!el || !card) return;
+  if (!el) return;
+
+  // Always clear any previous glow first (prevents "normal" rewards inheriting glow)
+  try{
+    el.classList.remove("mutGlow");
+    // Remove any existing mut-* class
+    [...el.classList].forEach(cls=>{
+      if (cls && cls.startsWith("mut-")) el.classList.remove(cls);
+    });
+    el.style.removeProperty("--mut-glow");
+    el.style.removeProperty("--mut-speed");
+    el.style.removeProperty("--mut-gradient");
+  }catch(_){}
+
+  if (!card) return;
 
   const mk = primaryGlowKey(card);
   if (mk === "normal") return;
@@ -1283,6 +1309,7 @@ function applyMutationGlow(el, card){
   else if (mk === "godly") el.style.setProperty("--mut-glow", "1.10");
   else el.style.setProperty("--mut-glow", "1.18"); // heavenly
 }
+
 
 
 function findRarityByName(name){
@@ -2435,7 +2462,7 @@ function renderDeckPicker(){
 function setDeckDetails(card){
   if (!deckDetailsImg) return;
   if (!card){
-    deckDetailsImg.src = "card.png";
+    deckDetailsImg.src = "cards/card.png";
     deckDetailsName.textContent = "—";
     deckDetailsRarity.textContent = "—";
     deckDetailsChance.textContent = "—";
@@ -2443,7 +2470,7 @@ function setDeckDetails(card){
     deckDetailsGps.textContent = "—";
     return;
   }
-  deckDetailsImg.src = card.img || "card.png";
+  deckDetailsImg.src = card.img || "cards/card.png";
   deckDetailsName.textContent = card.name || "Unknown";
   deckDetailsRarity.textContent = (card.rarity || "common").toUpperCase();
   deckDetailsChance.textContent = `${Number(card.pullChance ?? card.w ?? 0)}%`;
@@ -2609,8 +2636,8 @@ function buildSlots(){
         applyMutationGlow(s, c);
 
         const img = document.createElement("img");
-        img.src = c.img || "card.png";
-        img.onerror = ()=>{ img.src = "card.png"; };
+        img.src = c.img || "cards/card.png";
+        img.onerror = ()=>{ img.src = "cards/card.png"; };
         const badge = document.createElement("div");
         badge.className = "slotBadge";
         badge.textContent = `${c.gps}/s`;
@@ -2738,7 +2765,7 @@ function syncSummonerHeroUI(){
   const activeId = getActiveSummonerId();
   const s = getSummonerDef(activeId);
   if(heroImg && s){
-    const src = s.heroImg || s.img || "card.png";
+    const src = s.heroImg || s.img || "cards/card.png";
     heroImg.src = src;
     heroImg.alt = s.name || "Summoner";
     heroImg.style.display = "";
@@ -3272,6 +3299,21 @@ function renderNotifTab(){
 
 /* ================= Mutation Machine (Notifications) ================= */
 const MUTATION_MACHINE_DURATION_MS = 25 * 60 * 1000;
+const MUTATION_MACHINE_GOLD_SKIP_FULL = 1_000_000; // 1M gold to skip full 25:00
+const MUTATION_MACHINE_GOLD_SKIP_MIN  = 10_000;    // minimum cost when almost finished
+
+function calcMutationMachineSkipCost(remainingMs){
+  const fullSec = MUTATION_MACHINE_DURATION_MS / 1000;
+  const remSec = Math.max(0, Math.ceil((Number(remainingMs)||0) / 1000));
+  const ratio = Math.min(1, remSec / fullSec);
+  // Weight early skips higher so skipping at the start costs closer to full price
+  const weighted = Math.pow(ratio, 1.15);
+  const raw = MUTATION_MACHINE_GOLD_SKIP_FULL * weighted;
+  // Round to clean thousands
+  const rounded = Math.ceil(raw / 1000) * 1000;
+  return Math.max(MUTATION_MACHINE_GOLD_SKIP_MIN, rounded);
+}
+
 
 const MUTATION_MACHINE_TABLE = [
   { k: "Normal", w: 60 },
@@ -3355,7 +3397,7 @@ function closeMmSelectModal(){
 function setMmDetails(card){
   if (!mmDetailsImg) return;
   if (!card){
-    mmDetailsImg.src = "card.png";
+    mmDetailsImg.src = "cards/card.png";
     mmDetailsName.textContent = "—";
     mmDetailsRarity.textContent = "—";
     mmDetailsChance.textContent = "—";
@@ -3363,7 +3405,7 @@ function setMmDetails(card){
     mmDetailsGps.textContent = "—";
     return;
   }
-  mmDetailsImg.src = card.img || "card.png";
+  mmDetailsImg.src = card.img || "cards/card.png";
   mmDetailsName.textContent = card.name || "Unknown";
   mmDetailsRarity.textContent = (card.rarity || "common").toUpperCase();
   mmDetailsChance.textContent = `${Number(card.pullChance ?? card.w ?? 0)}%`;
@@ -3389,8 +3431,8 @@ function renderMmPickGrid(){
     applyMutationGlow(item, c);
 
     const img = document.createElement("img");
-    img.src = c.img || "card.png";
-    img.onerror = ()=>{ img.src = "card.png"; };
+    img.src = c.img || "cards/card.png";
+    img.onerror = ()=>{ img.src = "cards/card.png"; };
 
     const meta = document.createElement("div");
     meta.className = "deckPickMeta";
@@ -3438,13 +3480,13 @@ function openMmResultModal(card){
   }
 
   mmResultName.textContent = target?.name || "Mutated Card";
-  mmResultImg.src = target?.img || "card.png";
-  mmResultImg.onerror = ()=>{ mmResultImg.src = "card.png"; };
+  mmResultImg.src = target?.img || "cards/card.png";
+  mmResultImg.onerror = ()=>{ mmResultImg.src = "cards/card.png"; };
 
   // Hide the result text until reveal
   mmResultMeta.textContent = "Revealing...";
 
-  // Reset flip state (back face shows card.png via HTML)
+  // Reset flip state (back face shows cards/card.png via HTML)
   const flip = document.getElementById("mmFlipCard");
   if (flip) flip.classList.remove("revealed");
 
@@ -3583,11 +3625,11 @@ function startMutationMachine(option){
 
   // Pay / sacrifice
   if (option === "gold"){
-    if (state.gold < 5000000){
-      toast("Not enough gold", `You need ${fmt(5000000)} gold.`);
+    if (state.gold < MUTATION_MACHINE_GOLD_SKIP_FULL){
+      toast("Not enough gold", `You need ${fmt(MUTATION_MACHINE_GOLD_SKIP_FULL)} gold.`);
       return;
     }
-    state.gold -= 5000000;
+    state.gold -= MUTATION_MACHINE_GOLD_SKIP_FULL;
   }else if (option === "legendary"){
     const ok = sacrificeRarestCards("legendary", 5, mm.cardId);
     if (!ok){
@@ -3704,8 +3746,8 @@ function renderMutationMachinePanel(){
   if (card){
     const img = document.createElement("img");
     img.className = "mmSlotImg";
-    img.src = card.img || "card.png";
-    img.onerror = ()=>{ img.src = "card.png"; };
+    img.src = card.img || "cards/card.png";
+    img.onerror = ()=>{ img.src = "cards/card.png"; };
     slot.appendChild(img);
     applyMutationGlow(slot, card);
     bindTooltip(slot, ()=>card);
@@ -3800,7 +3842,7 @@ function renderMutationMachinePanel(){
 
   const options = [
     { v:"wait",        title:"Wait",        sub:"25 minutes (Free)" },
-    { v:"gold",        title:"Gold",        sub:"Pay 5,000,000 gold (Instant)" },
+    { v:"gold",        title:"Gold",        sub:"Pay 1,000,000 gold (Instant)" },
     { v:"legendary",   title:"Legendary",   sub:"Sacrifice 5 rarest Legendary (Instant)" },
     { v:"cosmic",      title:"Cosmic",      sub:"Sacrifice 3 rarest Cosmic (Instant)" },
     { v:"interstellar",title:"Interstellar",sub:"Sacrifice 1 rarest Interstellar (Instant)" },
@@ -3858,6 +3900,36 @@ function renderMutationMachinePanel(){
   controls.appendChild(group);
   controls.appendChild(btn);
 
+  // Skip button (only while running) — price varies based on remaining time
+  if (mm.status === "running"){
+    const remMs = Math.max(0, (Number(mm.endAt)||0) - Date.now());
+    const cost = calcMutationMachineSkipCost(remMs);
+    const skipBtn = document.createElement("button");
+    skipBtn.className = "mmStartBtn";
+    skipBtn.type = "button";
+    skipBtn.textContent = `⚡ Skip Now (${fmt(cost)} gold)`;
+    skipBtn.disabled = (state.gold < cost);
+    skipBtn.style.marginTop = "10px";
+    skipBtn.addEventListener("click", ()=>{
+      if (mm.status !== "running") return;
+      const leftMs = Math.max(0, (Number(mm.endAt)||0) - Date.now());
+      const price = calcMutationMachineSkipCost(leftMs);
+      if (state.gold < price){
+        toast("Not enough gold", `You need ${fmt(price)} gold.`);
+        return;
+      }
+      const ok = confirm(`Skip the remaining time for ${fmt(price)} gold?`);
+      if (!ok) return;
+      state.gold -= price;
+      mm.endAt = Date.now() - 1;
+      saveState();
+      completeMutationMachineIfNeeded();
+      renderNotifTab();
+      syncUI();
+    });
+    controls.appendChild(skipBtn);
+  }
+
 
   wrap.appendChild(controls);
 
@@ -3865,7 +3937,7 @@ function renderMutationMachinePanel(){
   const hint = document.createElement("div");
   hint.className = "small muted";
   hint.style.marginTop = "6px";
-  hint.textContent = "Eligible cards: Unhearted (not locked), and either no mutation or exactly one mutation. The Mutation Machine replaces the card\'s current mutation with a new random one (no stacking).";
+  hint.textContent = "Eligible cards: Unhearted (not locked), and either no mutation or exactly one mutation. The Mutation Machine replaces the card\'s current mutation with a new random one (no stacking). You can skip the remaining timer with Gold — price scales with time left.";
   wrap.appendChild(hint);
 
   notifContent.appendChild(wrap);
@@ -3940,9 +4012,9 @@ function showLuckyDrawResult(card){
 
   // Ensure we have an image even if some callers pass only a name
   const resolveCardImg = (c) => {
-    if (c && c.img && c.img !== "card.png") return c.img;
+    if (c && c.img && c.img !== "cards/card.png") return c.img;
     const nm = String(c?.name||"");
-    if (!nm) return "card.png";
+    if (!nm) return "cards/card.png";
     // Try to find image by name in CARD_REWARDS table
     try{
       for (const rar of Object.keys(CARD_REWARDS||{})){
@@ -3951,7 +4023,7 @@ function showLuckyDrawResult(card){
         if (hit && hit.img) return hit.img;
       }
     }catch(_){}
-    return "card.png";
+    return "cards/card.png";
   };
 
   const imgSrc = resolveCardImg(card);
@@ -3966,7 +4038,7 @@ function showLuckyDrawResult(card){
         <div class="flipCard" id="luckyFlipCard">
           <div class="flipInner">
             <div class="flipFace flipBack">
-              <img alt="Card back" src="card.png" />
+              <img alt="Card back" src="cards/card.png" />
             </div>
             <div class="flipFace flipFront">
               <img alt="Card" id="luckyFlipFrontImg" src="${imgSrc}" />
@@ -3982,7 +4054,7 @@ function showLuckyDrawResult(card){
     const cardEl = wrap.querySelector("#luckyFlipCard");
     const frontImg = wrap.querySelector("#luckyFlipFrontImg");
 
-    // Force correct reward image (prevents "stuck on back card.png")
+    // Force correct reward image (prevents "stuck on back cards/card.png")
     if (frontImg) frontImg.src = imgSrc;
 
     // Apply mutation glow to the OUTER wrapper so it matches every other mutated card.
@@ -4133,12 +4205,38 @@ function showWeatherTicker(text){
 }
 
 
+function ensureWxFlashEl(){
+  let el = document.getElementById("wxFlash");
+  if (el) return el;
+  el = document.createElement("div");
+  el.id = "wxFlash";
+  el.setAttribute("aria-hidden","true");
+  document.body.appendChild(el);
+  return el;
+}
+
 function triggerWeatherStrikeFX(cardId, weatherKey){
   if (!cardId) return;
   const wk = String(weatherKey||"").toLowerCase();
   const cls = `wx-${wk}`;
 
-  const els = document.querySelectorAll(`.slot.assigned[data-card-id="${CSS.escape(String(cardId))}"]`);
+  // Play strike SFX (autoplay-safe because strike happens after user interaction in the session)
+  try{ AudioSystem.play(AudioSystem.strike); }catch(_){}
+
+  // Screen flash (subtle but obvious)
+  try{
+    const fx = ensureWxFlashEl();
+    fx.classList.remove("on");
+    void fx.offsetWidth;
+    fx.classList.add("on");
+    setTimeout(()=>fx.classList.remove("on"), 520);
+  }catch(_){}
+
+  // Apply FX to all visual representations of the card (deck slots + cards collection thumbs)
+  const safeId = CSS.escape(String(cardId));
+  const els = document.querySelectorAll(
+    `.slot.assigned[data-card-id="${safeId}"], .cardThumb[data-card-id="${safeId}"]`
+  );
   if (!els || !els.length) return;
 
   els.forEach(el=>{
@@ -4152,8 +4250,9 @@ function triggerWeatherStrikeFX(cardId, weatherKey){
   // Auto-clean
   setTimeout(()=>{
     els.forEach(el=> el.classList.remove("wxStrike", cls));
-  }, 980);
+  }, 1100);
 }
+
 
 
 function applyMutationToCard(card, mutationKey){

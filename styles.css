@@ -14,7 +14,7 @@
   --interstellar:#9b6bff;
 
   --shadow: 0 18px 60px rgba(0,0,0,.55);
-  --cardBack: url("card.png");
+  --cardBack: url("cards/card.png");
 }
 
 *{box-sizing:border-box}
@@ -3045,7 +3045,7 @@ body::after{
 /* ===============================
    MUTATION MACHINE — REVEAL ANIMATION
    Card flip + energy charge + crack burst
-   Back image uses card.png
+   Back image uses cards/card.png
    =============================== */
 .mmFlipCard{
   width:100%;
@@ -3130,4 +3130,151 @@ body::after{
   0%{ opacity:0; transform: scale(.65); }
   70%{ opacity:1; transform: scale(1.12); }
   100%{ opacity:0; transform: scale(1.38); }
+}
+
+
+/* ===============================
+   WEATHER STRIKE VISUAL EFFECT
+   =============================== */
+.weatherStrike {
+  position: absolute;
+  inset: -8px;
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 5;
+  animation: strikeFlash 1.2s ease-out forwards;
+}
+.weatherStrike::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  filter: blur(14px);
+  opacity: .85;
+}
+.weatherStrike.thunder::before {
+  background: radial-gradient(circle at 50% 50%, rgba(120,180,255,.9), transparent 65%);
+  box-shadow: 0 0 35px rgba(120,180,255,.95), inset 0 0 25px rgba(160,220,255,.85);
+}
+.weatherStrike.blackhole::before {
+  background: radial-gradient(circle at center, rgba(30,30,60,.95), transparent 70%);
+  box-shadow: 0 0 45px rgba(80,80,160,.9);
+  animation: blackholePulse 1.2s ease-out forwards;
+}
+.weatherStrike.godly::before {
+  background: radial-gradient(circle, rgba(255,220,120,.95), transparent 65%);
+  box-shadow: 0 0 45px rgba(255,220,120,1);
+}
+.weatherStrike.heavenly::before {
+  background: conic-gradient(from 0deg, #9b6bff, #52fff0, #ffcc33, #9b6bff);
+  filter: blur(18px);
+  opacity: .9;
+}
+@keyframes strikeFlash {
+  0% { opacity: 0; transform: scale(.85); }
+  15% { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 0; transform: scale(1.25); }
+}
+@keyframes blackholePulse {
+  0% { transform: scale(.9); }
+  50% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
+
+/* ================= WEATHER STRIKE FX (OVERRIDE: more obvious + sound) =================
+   Applied by JS: .wxStrike plus optional .wx-<weatherKey>
+   Works on: .slot.assigned and .cardThumb
+*/
+#wxFlash{
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  z-index: 2000;
+  opacity:0;
+  background:
+    radial-gradient(900px 520px at 50% 40%, rgba(255,255,255,.22), rgba(0,0,0,0) 70%),
+    linear-gradient(180deg, rgba(120,220,255,.10), rgba(140,90,255,.08));
+  mix-blend-mode: screen;
+}
+#wxFlash.on{ animation: wxFlash .52s ease-out 1; }
+@keyframes wxFlash{
+  0%{ opacity:0; }
+  22%{ opacity:1; }
+  100%{ opacity:0; }
+}
+
+/* Base accent per weather key (fallbacks are fine) */
+.wx-spacestorm{ --wxA: rgba(120,220,255,.92); --wxB: rgba(255,255,255,.85); }
+.wx-antigravity{ --wxA: rgba(180,120,255,.90); --wxB: rgba(255,255,255,.80); }
+.wx-ascension{ --wxA: rgba(82,255,240,.92); --wxB: rgba(255,255,255,.82); }
+.wx-multiverse{ --wxA: rgba(255,95,215,.88); --wxB: rgba(255,255,255,.78); }
+.wxStrike{ --wxA: rgba(255,255,255,.85); --wxB: rgba(120,220,255,.65); }
+
+/* Strike animation target */
+.slot.wxStrike,
+.cardThumb.wxStrike{
+  position: relative;
+  transform: translateZ(0);
+  animation: wxJolt .38s ease-out 1;
+}
+@keyframes wxJolt{
+  0%{ transform: translateZ(0) scale(1); filter: brightness(1); }
+  20%{ transform: translateZ(0) scale(1.04) rotate(-0.6deg); filter: brightness(1.45); }
+  55%{ transform: translateZ(0) scale(1.02) rotate(0.6deg); filter: brightness(1.20); }
+  100%{ transform: translateZ(0) scale(1) rotate(0deg); filter: brightness(1); }
+}
+
+/* Ring burst */
+.slot.wxStrike::before,
+.cardThumb.wxStrike::before{
+  content:"";
+  position:absolute;
+  inset:-14px;
+  border-radius: inherit;
+  pointer-events:none;
+  z-index: 8;
+  background:
+    radial-gradient(closest-side, var(--wxB), rgba(0,0,0,0) 70%),
+    radial-gradient(circle at 35% 25%, var(--wxA), rgba(0,0,0,0) 55%),
+    radial-gradient(circle at 70% 70%, rgba(140,90,255,.45), rgba(0,0,0,0) 60%);
+  mix-blend-mode: screen;
+  filter: blur(0.6px) saturate(1.25);
+  animation: wxRing2 1.05s ease-out 1;
+}
+@keyframes wxRing2{
+  0%{ opacity:0; transform: scale(.88); }
+  18%{ opacity:1; transform: scale(1); }
+  100%{ opacity:0; transform: scale(1.25); }
+}
+
+/* Lightning bolt slash */
+.slot.wxStrike::after,
+.cardThumb.wxStrike::after{
+  content:"";
+  position:absolute;
+  left:50%;
+  top:-22px;
+  width: 200px;
+  height: 220px;
+  transform: translateX(-50%) rotate(-14deg);
+  pointer-events:none;
+  z-index: 9;
+  background:
+    linear-gradient(90deg,
+      rgba(0,0,0,0),
+      var(--wxA),
+      rgba(255,255,255,.95),
+      var(--wxA),
+      rgba(0,0,0,0)
+    );
+  filter: blur(0.4px);
+  mix-blend-mode: screen;
+  clip-path: polygon(50% 0%, 62% 18%, 56% 22%, 74% 42%, 52% 56%, 62% 66%, 40% 86%, 48% 100%, 26% 78%, 42% 62%, 34% 52%, 46% 38%, 38% 28%);
+  animation: wxBolt2 1.05s ease-out 1;
+}
+@keyframes wxBolt2{
+  0%{ opacity:0; transform: translateX(-50%) translateY(-10px) rotate(-14deg) scale(.88); }
+  16%{ opacity:1; transform: translateX(-50%) translateY(0) rotate(-14deg) scale(1); }
+  100%{ opacity:0; transform: translateX(-50%) translateY(18px) rotate(-14deg) scale(1.12); }
 }
